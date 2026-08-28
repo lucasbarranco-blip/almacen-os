@@ -8,6 +8,8 @@
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&family=Nunito+Sans:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.5/JsBarcode.all.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <style>
   :root{
     --paper:#FBF6E9;
@@ -231,6 +233,13 @@
     display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;
   }
   .pos-topbar .icon-btn:hover{background:var(--green-soft);}
+  .pos-sync-badge{
+    width:10px;height:10px;border-radius:50%;flex-shrink:0;margin:0 2px;
+    background:var(--ink-soft);
+  }
+  .pos-sync-badge.ok{background:#4C7A3E;}
+  .pos-sync-badge.pendiente{background:var(--amber);}
+  .pos-sync-badge.offline{background:var(--rust);}
 
   .pos-body{display:flex;flex:1;min-height:0;}
 
@@ -858,6 +867,7 @@
           <div class="tab active">Registrar</div>
           <div class="ticket-no mono" id="pos-ticket-no">#000001</div>
           <input type="text" class="search" id="pos-search" placeholder="escanear código, buscar producto, o 2*código para cargar varios..." oninput="posSearchInput()" onkeydown="posSearchKey(event)">
+          <span id="pos-sync-badge" class="pos-sync-badge" style="display:none;" title=""></span>
           <button class="icon-btn" id="pos-fullscreen-btn" title="Pantalla completa — para que el cliente solo vea la venta" onclick="toggleFullscreenPOS()">⛶</button>
           <button class="icon-btn" title="Acciones" onclick="openAcciones()">⋮</button>
         </div>
@@ -1257,12 +1267,32 @@
     </div>
 
     <div class="card">
-      <h2>Sincronización multiplataforma</h2>
+      <h2>Sincronización en vivo entre cajas</h2>
       <div class="subtitle" style="margin-bottom:10px;">
-        Sincroniza catálogo, ventas, clientes y config entre dispositivos usando una base de datos propia (Supabase, aparte de cualquier otro proyecto) y una contraseña compartida entre las cajas. Es manual y en un solo sentido por vez —
-        "Subir" pisa la nube con lo de este dispositivo, "Bajar" pisa este dispositivo con lo de la nube. No fusiona
-        cambios simultáneos de dos cajas — si necesitás eso (dos puntos de venta vendiendo al mismo tiempo con datos
-        compartidos en vivo), es un proyecto aparte y más delicado, avisame.
+        Para cuando varias cajas venden al mismo tiempo: comparten el mismo stock, no repiten número de ticket, y si se corta
+        la conexión en una caja, esa caja sigue vendiendo sola y se pone al día apenas vuelve internet. Usa Firebase (Google) —
+        gratis, sin tarjeta, no se duerme por inactividad.
+      </div>
+      <div class="field" style="margin-bottom:10px;">
+        <label>Configuración de Firebase (pegá acá el bloque completo que te da la consola de Firebase, con apiKey/projectId/etc.)</label>
+        <textarea id="cfg-sync-firebase-config" rows="6" style="font-family:'IBM Plex Mono',monospace;font-size:12px;" placeholder='{ apiKey: "...", authDomain: "...", projectId: "...", storageBucket: "...", messagingSenderId: "...", appId: "..." }'></textarea>
+      </div>
+      <div class="row">
+        <div class="field"><label>¿Cuál caja es esta computadora?</label>
+          <select id="cfg-sync-caja"></select>
+        </div>
+        <button class="btn primary small" onclick="liveSyncConectar()" style="align-self:flex-end;">Conectar esta caja</button>
+        <span id="live-sync-estado" style="font-size:13px;color:var(--ink-soft);align-self:center;"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Respaldo manual (copia de seguridad completa)</h2>
+      <div class="subtitle" style="margin-bottom:10px;">
+        Copia manual de todo (catálogo, ventas, clientes, config) a tu base de Supabase, en un solo sentido por vez —
+        "Subir" pisa la nube con lo de este dispositivo, "Bajar" pisa este dispositivo con lo de la nube. Sirve como
+        respaldo o para copiar todo a una caja nueva. Para que varias cajas convivan vendiendo al mismo tiempo, usá la
+        tarjeta de arriba en cambio.
       </div>
       <div class="row">
         <div class="field" style="flex:1;min-width:280px;"><label>URL de Supabase</label><input id="cfg-sync-url" type="text" style="width:100%;" placeholder="https://xxxx.supabase.co"></div>
@@ -2081,7 +2111,7 @@ const DEFAULT_CONFIG = {
   sucursal: { nombre:'Sucursal 1', domicilio:'', telefono:'', email:'', activa:true },
   arca: { habilitado:false, ptoVta:1, workerUrl:'' },
   atajos: { buscar:'F1', repetir:'F2', anular:'F3', limpiar:'F4', manual:'F5', descuento:'F6', cobrar:'F10', cerrarcaja:'F11', informex:'F12', borrarLinea:'Delete', cancelar:'Escape' },
-  sync: { supabaseUrl:'', supabaseAnonKey:'', password:'', nombreDispositivo:'' },
+  sync: { supabaseUrl:'', supabaseAnonKey:'', password:'', nombreDispositivo:'', cajaId:null, liveEnabled:false, firebaseConfig:null },
   ia: { workerUrl:'' },
   ticket: {
     encabezado1:'', encabezado2:'',
@@ -2479,15 +2509,19 @@ function saveProduct(){
     if(dup){ alert(`El código ${data.codigo} ya existe en "${dup.nombre}" (control activado en Configuración).`); return; }
   }
 
+  let productoFinal;
   if(id){
     const p = state.productos.find(x=>x.id===parseInt(id));
     Object.assign(p, data);
+    productoFinal = p;
   } else {
-    state.productos.push({id: state.nextProdId++, ...data});
+    productoFinal = {id: state.nextProdId++, ...data};
+    state.productos.push(productoFinal);
   }
   persist();
   closeProductModal();
   renderInventario();
+  empujarProducto(productoFinal);
 }
 
 function deleteProduct(id){
@@ -2495,6 +2529,7 @@ function deleteProduct(id){
   state.productos = state.productos.filter(p=>p.id!==id);
   persist();
   renderInventario();
+  borrarProductoNube(id);
 }
 
 /* ---------------- POS: pantallas del terminal (cierre / main / pago / confirm) ---------------- */
@@ -2681,6 +2716,7 @@ function confirmarApertura(){
   showPosScreen('pos-main');
   renderPosGrid();
   renderPosCart();
+  empujarSesion(nueva);
 }
 
 /* ================= ATAJOS DE TECLADO (punto de venta) ================= */
@@ -3195,6 +3231,7 @@ function confirmarCierreCaja(){
   persist();
   closeArqueo();
   volverACajas(); // vuelve directo a la grilla con "Abrir caja registradora"
+  empujarSesion(ses);
   if(confirm('Caja cerrada. ¿Imprimir el Cierre Z ahora?')){
     imprimirCierreZ(sesionCerradaId);
   }
@@ -3338,9 +3375,17 @@ async function confirmarVenta(){
     }
   }
 
+  // reserva el stock de forma segura entre las 3 cajas y pide el próximo ticket de esta caja
+  const sync = await ventaConSync(cart);
+  if(!sync.ok){
+    toast(`No se pudo vender "${sync.producto}": justo se quedó sin stock (otra caja se lo llevó recién).`, 'err', 6000);
+    renderPosGrid();
+    return;
+  }
+
   const venta = {
     id: state.nextVentaId++,
-    ticket: state.nextTicket,
+    ticket: sync.ticket,
     cajaId: cajaActivaId,
     sesionId: sesionActivaId,
     fecha: new Date().toISOString(),
@@ -3360,6 +3405,7 @@ async function confirmarVenta(){
       arcaResult = await facturarConArca(venta);
     }catch(e){
       toast('No se pudo facturar con ARCA: '+e.message, 'err', 6000);
+      await revertirStockSync(cart); // devuelve a la nube el stock que ya se había reservado
       return; // no se descuenta stock ni se registra la venta — reintentá o pasá a ticket no fiscal
     }
     venta.arca = {
@@ -3371,7 +3417,7 @@ async function confirmarVenta(){
 
   cart.forEach(l=>{
     const p = state.productos.find(x=>x.id===l.id);
-    if(p) p.stock -= l.cant;
+    if(p) p.stock -= l.cant; // stock local — la nube ya se descontó vía RPC si había conexión
   });
   state.ventas.unshift(venta);
   if(esCtaCte){
@@ -3379,8 +3425,9 @@ async function confirmarVenta(){
   } else {
     state.caja.unshift({fecha: venta.fecha, tipo:'Venta contado', obs:`Ticket #${venta.ticket} — ${nombreCaja} — ${metodoLabel} — ${clienteActual}`, importe: total, cajaId: cajaActivaId, sesionId: sesionActivaId});
   }
-  state.nextTicket++;
+  state.nextTicket = Math.max(state.nextTicket, sync.ticket) + 1;
   persist();
+  empujarVenta(venta, sync.offline);
 
   cart = []; selectedLineId = null; clienteActual = state.config.pos.clienteDefault; clienteActualId = null;
   renderInventario();
@@ -4330,6 +4377,8 @@ function renderConfigView(){
   document.getElementById('cfg-pie2').value = c.ticket.pie2 || '';
   document.getElementById('cfg-pie3').value = c.ticket.pie3 || '';
   renderCfgCajas();
+  document.getElementById('cfg-sync-firebase-config').value = state.config.sync.firebaseConfig ? JSON.stringify(state.config.sync.firebaseConfig, null, 2) : '';
+  fillCajaSyncSelect();
   renderCfgPagos();
   renderCfgCondPago();
   renderCfgListaSimple('cfg-movcaja-list', state.config.tiposMovCaja, 'MovCaja');
@@ -4537,6 +4586,7 @@ function guardarConfig(){
   document.querySelectorAll('select[id^="f-"]').forEach(s=>{ s.dataset.filled=''; });
   persist();
   toast('Configuración guardada.', 'ok');
+  empujarCajas();
 }
 
 
@@ -5956,6 +6006,215 @@ async function imprimirInformeXActual(){
 }
 
 /* ================= SINCRONIZACIÓN MULTIPLATAFORMA ================= */
+/* ================= SINCRONIZACIÓN EN VIVO ENTRE CAJAS (Firebase/Firestore) ================= */
+let db = null;
+let liveSyncActivo = false;
+
+function actualizarEstadoSync(){
+  const el = document.getElementById('live-sync-estado');
+  const badge = document.getElementById('pos-sync-badge');
+  const online = navigator.onLine;
+  if(el){
+    if(!liveSyncActivo) el.textContent = '';
+    else if(!online) el.textContent = `🔴 Sin conexión — vendiendo offline, se pone al día sola al volver`;
+    else el.textContent = `🟢 Sincronizado`;
+  }
+  if(badge){
+    if(!liveSyncActivo){ badge.style.display = 'none'; }
+    else {
+      badge.style.display = 'inline-block';
+      const cajaNombre = (state.cajas.find(c=>c.id===state.config.sync.cajaId)||{}).nombre || '';
+      if(!online){ badge.className = 'pos-sync-badge offline'; badge.title = `${cajaNombre} — sin conexión, vendiendo offline`; }
+      else { badge.className = 'pos-sync-badge ok'; badge.title = `${cajaNombre} — sincronizado en vivo con las demás cajas`; }
+    }
+  }
+}
+function fillCajaSyncSelect(){
+  const sel = document.getElementById('cfg-sync-caja');
+  if(!sel) return;
+  sel.innerHTML = state.cajas.map(c=>`<option value="${c.id}" ${state.config.sync.cajaId===c.id?'selected':''}>${c.nombre}</option>`).join('');
+}
+// lee el bloque de config que pega Lucas desde la consola de Firebase (JS suelto, no JSON) sin usar eval
+function parseFirebaseConfigTexto(texto){
+  const obj = {};
+  const re = /(\w+)\s*:\s*"([^"]*)"/g;
+  let m;
+  while((m = re.exec(texto))) obj[m[1]] = m[2];
+  if(!obj.apiKey || !obj.projectId) return null;
+  return obj;
+}
+async function liveSyncConectar(){
+  const texto = document.getElementById('cfg-sync-firebase-config').value.trim();
+  const cajaId = parseInt(document.getElementById('cfg-sync-caja').value);
+  const cfgFirebase = parseFirebaseConfigTexto(texto);
+  if(!cfgFirebase){ toast('No pude leer la configuración de Firebase — pegá el bloque completo tal cual te lo dio la consola.', 'err', 5000); return; }
+  if(!cajaId){ toast('Elegí qué caja es esta computadora.', 'err'); return; }
+  state.config.sync.firebaseConfig = cfgFirebase;
+  state.config.sync.cajaId = cajaId;
+  state.config.sync.liveEnabled = true;
+  persist();
+  await liveSyncInit();
+}
+async function liveSyncInit(){
+  const cfg = state.config.sync;
+  if(!cfg.liveEnabled || !cfg.firebaseConfig || !cfg.cajaId) return;
+  if(typeof firebase === 'undefined'){ toast('No se pudo cargar la librería de Firebase (revisá la conexión).', 'err', 5000); return; }
+  try{
+    const app = (firebase.apps && firebase.apps.length) ? firebase.app() : firebase.initializeApp(cfg.firebaseConfig);
+    db = firebase.firestore(app);
+    try{ await db.enablePersistence({synchronizeTabs:true}); }catch(e){ /* ya habilitado, o el navegador no lo soporta — no es bloqueante */ }
+  }catch(e){ toast('No se pudo conectar a Firebase: '+e.message, 'err', 5000); return; }
+  liveSyncActivo = true;
+  fillCajaSyncSelect();
+  actualizarEstadoSync();
+  await empujarCajas();
+  await traerProductos();
+  db.collection('productos').onSnapshot(snap=>{ snap.docChanges().forEach(aplicarCambioProducto); }, ()=>{});
+  db.collection('sesiones').onSnapshot(()=>renderCajasGrid(), ()=>{});
+  toast('Sincronización en vivo conectada — esta computadora es ' + (state.cajas.find(c=>c.id===cfg.cajaId)||{}).nombre, 'ok');
+  window.addEventListener('online', actualizarEstadoSync);
+  window.addEventListener('offline', actualizarEstadoSync);
+}
+function filaAProducto(data, id){
+  return {
+    id: id, codigo: data.codigo, nombre: data.nombre, familia: data.familia,
+    proveedor: data.proveedor, costo: Number(data.costo), venta: Number(data.venta),
+    stock: Number(data.stock), stockMin: Number(data.stock_min), iva: Number(data.iva),
+    vencimiento: data.vencimiento, plu: data.plu, pluFormato: data.plu_formato,
+  };
+}
+function productoAFila(p){
+  return {
+    codigo: p.codigo, nombre: p.nombre, familia: p.familia,
+    proveedor: p.proveedor, costo: p.costo, venta: p.venta, stock: p.stock,
+    stock_min: p.stockMin, iva: p.iva, vencimiento: p.vencimiento || null,
+    plu: p.plu, plu_formato: p.pluFormato,
+  };
+}
+async function traerProductos(){
+  if(!db) return;
+  try{
+    const snap = await db.collection('productos').get();
+    if(!snap.empty){
+      snap.forEach(doc=>{
+        const id = parseInt(doc.id, 10);
+        const local = state.productos.find(p=>p.id===id);
+        const remoto = filaAProducto(doc.data(), id);
+        if(!local) state.productos.push(remoto); else Object.assign(local, remoto);
+      });
+      persist();
+      renderInventario();
+      if(document.getElementById('pos-main')?.classList.contains('active')) renderPosGrid();
+    } else if(state.productos.length){
+      // la nube todavia no tiene catalogo: esta caja se lo manda de arranque
+      const batch = db.batch();
+      state.productos.forEach(p=>batch.set(db.collection('productos').doc(String(p.id)), productoAFila(p)));
+      await batch.commit();
+    }
+  }catch(e){ toast('No se pudo traer el catálogo de la nube: '+e.message, 'warn', 5000); }
+}
+function aplicarCambioProducto(change){
+  const id = parseInt(change.doc.id, 10);
+  if(change.type === 'removed'){
+    state.productos = state.productos.filter(p=>p.id!==id);
+  } else {
+    const remoto = filaAProducto(change.doc.data(), id);
+    const local = state.productos.find(p=>p.id===id);
+    if(local) Object.assign(local, remoto); else state.productos.push(remoto);
+  }
+  persist();
+  renderInventario();
+  if(document.getElementById('pos-main')?.classList.contains('active')){ renderPosGrid(); renderPosRail(); }
+}
+// nota: a diferencia de la version anterior (Supabase), estos empujes no necesitan una cola manual
+// propia — Firestore guarda los cambios offline solo y los sube el solo apenas vuelve la conexion.
+async function empujarCajas(){
+  if(!db) return;
+  try{
+    const batch = db.batch();
+    state.cajas.forEach(c=>batch.set(db.collection('cajas').doc(String(c.id)), {nombre:c.nombre}));
+    await batch.commit();
+  }catch(e){}
+}
+async function empujarProducto(p){
+  if(!liveSyncActivo || !db) return;
+  try{ await db.collection('productos').doc(String(p.id)).set(productoAFila(p)); }catch(e){}
+}
+async function borrarProductoNube(id){
+  if(!liveSyncActivo || !db) return;
+  try{ await db.collection('productos').doc(String(id)).delete(); }catch(e){}
+}
+async function empujarSesion(ses){
+  if(!liveSyncActivo || !db) return;
+  const fila = {
+    caja_id: ses.cajaId, operador: ses.operador || null,
+    fecha_apertura: ses.fechaApertura || null, fecha_cierre: ses.fechaCierre || null,
+    monto_inicial: ses.efectivoApertura || 0, cierre_detalle: ses.cierreDetalle || null,
+    cierre_z: ses.cierreZ || null, numero_z: ses.numeroZ || null,
+  };
+  try{ await db.collection('sesiones').doc(String(ses.id)).set(fila); }catch(e){}
+}
+
+// llamado al confirmar una venta: reserva el stock de forma segura entre cajas (transaccion atomica
+// de Firestore) y pide un numero de ticket compartido para esta caja. Las transacciones no funcionan
+// offline (necesitan ida y vuelta real al servidor) — si falla por eso, la venta sigue offline con
+// el stock/ticket locales, y se reconcilia sola cuando vuelve internet.
+async function ventaConSync(cart){
+  if(!liveSyncActivo || !navigator.onLine) return { ok:true, ticket: state.nextTicket, offline:true };
+  for(const l of cart){
+    if(l.manual) continue;
+    try{
+      const ok = await db.runTransaction(async (tx)=>{
+        const ref = db.collection('productos').doc(String(l.id));
+        const doc = await tx.get(ref);
+        if(!doc.exists) return true; // producto sin sincronizar todavia: no bloquea la venta
+        const stockActual = Number(doc.data().stock);
+        if(stockActual < l.cant) return false;
+        tx.update(ref, { stock: stockActual - l.cant });
+        return true;
+      });
+      if(!ok) return { ok:false, producto: l.nombre };
+    }catch(e){
+      return { ok:true, ticket: state.nextTicket, offline:true };
+    }
+  }
+  let ticket = state.nextTicket;
+  try{
+    ticket = await db.runTransaction(async (tx)=>{
+      const ref = db.collection('ticket_counters').doc(String(state.config.sync.cajaId));
+      const doc = await tx.get(ref);
+      const next = (doc.exists ? doc.data().ultimo : 0) + 1;
+      tx.set(ref, { ultimo: next });
+      return next;
+    });
+  }catch(e){}
+  return { ok:true, ticket, offline:false };
+}
+async function revertirStockSync(cart){
+  if(!liveSyncActivo || !navigator.onLine) return;
+  for(const l of cart){
+    if(l.manual) continue;
+    try{
+      await db.runTransaction(async (tx)=>{
+        const ref = db.collection('productos').doc(String(l.id));
+        const doc = await tx.get(ref);
+        if(!doc.exists) return;
+        tx.update(ref, { stock: Number(doc.data().stock) + l.cant });
+      });
+    }catch(e){}
+  }
+}
+async function empujarVenta(venta, offline){
+  if(!liveSyncActivo || !db) return;
+  const fila = {
+    caja_id: venta.cajaId, sesion_id: venta.sesionId, ticket: venta.ticket,
+    fecha: venta.fecha, items: venta.items, total: venta.total, metodo_pago: venta.pago,
+    comprobante_tipo: venta.comprobante, cae: venta.arca?.cae || null, cae_vto: venta.arca?.caeVto || null,
+    cbte_tipo: venta.arca?.cbteTipo || null, cbte_nro: venta.arca?.nro || null, cliente_id: venta.clienteId || null,
+  };
+  try{ await db.collection('ventas').doc(String(venta.id)).set(fila); }catch(e){}
+}
+
 async function syncHashPassword(pw){
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pw));
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
@@ -6043,6 +6302,7 @@ persist();
 renderInventario();
 renderCajasGrid();
 intentarReconectarImpresora();
+if(state.config.sync.liveEnabled) liveSyncInit();
 </script>
 </body>
 </html>
