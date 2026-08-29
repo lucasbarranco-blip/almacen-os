@@ -6077,18 +6077,18 @@ async function liveSyncInit(){
 }
 function filaAProducto(data, id){
   return {
-    id: id, codigo: data.codigo, nombre: data.nombre, familia: data.familia,
+    id: id, codigo: data.codigo ?? '', nombre: data.nombre ?? '', familia: data.familia ?? 'General',
     proveedor: data.proveedor, costo: Number(data.costo), venta: Number(data.venta),
-    stock: Number(data.stock), stockMin: Number(data.stock_min), iva: Number(data.iva),
+          stock: Number(data.stock)||0, stockMin: Number(data.stock_min)||0, iva: Number(data.iva)||21,
     vencimiento: data.vencimiento, plu: data.plu, pluFormato: data.plu_formato,
   };
 }
 function productoAFila(p){
   return {
-    codigo: p.codigo, nombre: p.nombre, familia: p.familia,
-    proveedor: p.proveedor, costo: p.costo, venta: p.venta, stock: p.stock,
-    stock_min: p.stockMin, iva: p.iva, vencimiento: p.vencimiento || null,
-    plu: p.plu, plu_formato: p.pluFormato,
+    codigo: p.codigo ?? '', nombre: p.nombre ?? '', familia: p.familia ?? 'General',
+    proveedor: p.proveedor ?? 'Sin asignar', costo: p.costo ?? 0, venta: p.venta ?? 0, stock: p.stock ?? 0,
+    stock_min: p.stockMin ?? 0, iva: p.iva ?? 21, vencimiento: p.vencimiento || null,
+    plu: p.plu || null, plu_formato: p.pluFormato || null,
   };
 }
 async function traerProductos(){
