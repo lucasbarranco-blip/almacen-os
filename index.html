@@ -577,6 +577,7 @@
         <button class="btn primary small" onclick="openProductModal()">+ Nuevo producto</button>
       </h2>
       <input type="text" id="inv-search" placeholder="buscar por nombre o código..." style="width:100%;margin-bottom:12px;" oninput="renderInventario()">
+      <div id="inv-aviso" style="display:none;font-size:12.5px;color:var(--az-soft);margin-bottom:10px;font-family:'IBM Plex Mono',monospace;"></div>
       <div style="overflow-x:auto;">
         <table>
           <thead>
@@ -2238,13 +2239,15 @@ function tickClock(){
 setInterval(tickClock, 1000); tickClock();
 
 /* ---------------- INVENTARIO ---------------- */
+const INV_TOPE = 200; // cuántas filas se dibujan de una (con 12.700 productos, dibujarlas todas cuelga la página)
 function renderInventario(){
   const q = document.getElementById('inv-search').value.toLowerCase();
   const body = document.getElementById('inv-body');
   const list = state.productos.filter(p =>
     p.nombre.toLowerCase().includes(q) || p.codigo.includes(q)
   );
-  body.innerHTML = list.map(p=>{
+  const visibles = list.slice(0, INV_TOPE);
+  body.innerHTML = visibles.map(p=>{
     const margen = p.costo>0 ? ((p.venta-p.costo)/p.costo*100).toFixed(1) : '—';
     const low = p.stock <= p.stockMin;
     return `<tr>
@@ -2262,10 +2265,24 @@ function renderInventario(){
     </tr>`;
   }).join('') || `<tr><td colspan="8"><div class="empty">Sin resultados</div></td></tr>`;
 
-  document.getElementById('stat-count').textContent = state.productos.length;
+  // aviso cuando hay más de los que se muestran, para que nadie crea que faltan productos
+  const aviso = document.getElementById('inv-aviso');
+  if(aviso){
+    if(list.length > INV_TOPE){
+      aviso.style.display = 'block';
+      aviso.textContent = `Mostrando ${INV_TOPE} de ${list.length.toLocaleString('es-AR')} productos. Usá el buscador para encontrar uno puntual.`;
+    } else if(list.length){
+      aviso.style.display = 'block';
+      aviso.textContent = `${list.length.toLocaleString('es-AR')} producto(s).`;
+    } else {
+      aviso.style.display = 'none';
+    }
+  }
+
+  document.getElementById('stat-count').textContent = state.productos.length.toLocaleString('es-AR');
   document.getElementById('stat-costo').textContent = fmt(state.productos.reduce((a,p)=>a+p.costo*p.stock,0));
   document.getElementById('stat-venta').textContent = fmt(state.productos.reduce((a,p)=>a+p.venta*p.stock,0));
-  document.getElementById('stat-low').textContent = state.productos.filter(p=>p.stock<=p.stockMin).length;
+  document.getElementById('stat-low').textContent = state.productos.filter(p=>p.stock<=p.stockMin).length.toLocaleString('es-AR');
   renderAjustes();
   renderPromos();
   renderVencimientos();
@@ -3003,6 +3020,7 @@ function setPosCategoria(f){
 }
 
 /* --- grilla de productos --- */
+const POS_TOPE = 120; // tope de tarjetas dibujadas: con 12.700 productos el POS se cuelga si las dibuja todas
 function renderPosGrid(){
   const q = (document.getElementById('pos-search').value || '').toLowerCase();
   const grid = document.getElementById('pos-products');
@@ -3016,6 +3034,8 @@ function renderPosGrid(){
     const rb = rapidos.includes(b.id) ? 0 : 1;
     return ra - rb || a.nombre.localeCompare(b.nombre);
   });
+  const totalEncontrados = results.length;
+  results = results.slice(0, POS_TOPE);
   grid.innerHTML = results.map(p=>{
     const pinned = rapidos.includes(p.id);
     const agotado = p.stock < 1;
@@ -3030,6 +3050,13 @@ function renderPosGrid(){
       </div>
     </div>`;
   }).join('') || `<div class="empty" style="color:var(--ink-soft);grid-column:1/-1;">Sin coincidencias</div>`;
+
+  // si hay más de los que entran, avisar para que el cajero sepa que tiene que buscar/escanear
+  if(totalEncontrados > POS_TOPE){
+    grid.innerHTML += `<div style="grid-column:1/-1;padding:14px;text-align:center;color:var(--ink-soft);font-size:12.5px;font-family:'IBM Plex Mono',monospace;">
+      Mostrando ${POS_TOPE} de ${totalEncontrados.toLocaleString('es-AR')}. Escaneá el código o buscá por nombre.
+    </div>`;
+  }
 }
 
 /* --- carrito --- */
@@ -3931,9 +3958,12 @@ function verComprobante(ventaId){
 }
 
 /* ---------------- LISTADO ---------------- */
+const LISTADO_TOPE = 200;
+const SELECT_TOPE = 300; // los <select> de producto con 12.700 opciones traban el navegador al abrirse // cada fila trae 2 campos de formulario: dibujar 12.700 crea ~25.000 elementos y cuelga el navegador
 function renderListado(){
   const body = document.getElementById('listado-body');
-  body.innerHTML = state.productos.map(p=>`
+  const visibles = state.productos.slice(0, LISTADO_TOPE);
+  body.innerHTML = visibles.map(p=>`
     <tr>
       <td><input type="checkbox" class="etq-check" value="${p.id}"></td>
       <td><input type="number" class="etq-cant mono" min="1" value="1" style="width:52px;" data-id="${p.id}"></td>
@@ -3946,7 +3976,10 @@ function renderListado(){
       <td class="num">${p.stock}</td>
     </tr>
   `).join('');
-  document.getElementById('listado-count').textContent = `${state.productos.length} productos`;
+  const total = state.productos.length;
+  document.getElementById('listado-count').textContent = total > LISTADO_TOPE
+    ? `Mostrando ${LISTADO_TOPE} de ${total.toLocaleString('es-AR')} productos (para etiquetas, seleccioná de a tandas)`
+    : `${total} productos`;
 }
 
 function exportCSV(){
@@ -4219,7 +4252,7 @@ function addFcItem(){
   tr.innerHTML = `
     <td><select class="fc-prod" style="width:100%;" onchange="recalcFcTotales()">
       <option value="">— elegir producto —</option>
-      ${state.productos.map(p=>`<option value="${p.id}">${p.nombre}</option>`).join('')}
+      ${state.productos.slice(0,SELECT_TOPE).map(p=>`<option value="${p.id}">${p.nombre}</option>`).join('')}
     </select></td>
     <td><input type="number" class="fc-cant" value="1" min="0" step="1" style="width:80px;" oninput="recalcFcTotales()"></td>
     <td><input type="number" class="fc-costo" value="0" min="0" step="0.01" style="width:110px;" oninput="recalcFcTotales()"></td>
@@ -4631,7 +4664,7 @@ function toastAtajo(tecla, accion){
 /* ================= AJUSTES DE STOCK ================= */
 function openAjuste(productoId){
   const selP = document.getElementById('aj-producto');
-  selP.innerHTML = state.productos.map(p=>`<option value="${p.id}" ${p.id===productoId?'selected':''}>${p.nombre} (stock ${p.stock})</option>`).join('');
+  selP.innerHTML = state.productos.slice(0,SELECT_TOPE).map(p=>`<option value="${p.id}" ${p.id===productoId?'selected':''}>${p.nombre} (stock ${p.stock})</option>`).join('');
   const selT = document.getElementById('aj-tipo');
   selT.innerHTML = state.config.tiposMovStock.map(t=>`<option>${t}</option>`).join('');
   document.getElementById('aj-cant').value = -1;
@@ -4981,7 +5014,7 @@ function renderCfgRapidos(){
     const p = state.productos.find(x=>x.id===id);
     return p ? `<span class="chip">★ ${p.nombre}<span onclick="cfgQuitarRapido(${id})">✕</span></span>` : '';
   }).join('') || '<span class="subtitle">Sin productos fijados.</span>';
-  sel.innerHTML = state.productos.filter(p=>!ids.includes(p.id))
+  sel.innerHTML = state.productos.filter(p=>!ids.includes(p.id)).slice(0,SELECT_TOPE)
     .map(p=>`<option value="${p.id}">${p.nombre}</option>`).join('');
 }
 function cfgAgregarRapido(){
@@ -5204,7 +5237,7 @@ function promoTipoChange(){
   document.getElementById('pm-f-pago').style.display = t==='pct_pago' ? 'block':'none';
 }
 function openPromoModal(id){
-  document.getElementById('pm-producto').innerHTML = state.productos.map(p=>`<option value="${p.id}">${p.nombre}</option>`).join('');
+  document.getElementById('pm-producto').innerHTML = state.productos.slice(0,SELECT_TOPE).map(p=>`<option value="${p.id}">${p.nombre}</option>`).join('');
   document.getElementById('pm-pago').innerHTML = PAY_METHODS.map(m=>`<option value="${m.id}">${m.label}</option>`).join('');
   document.getElementById('promo-overlay').classList.add('open');
   if(id){
