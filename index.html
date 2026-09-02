@@ -2129,7 +2129,21 @@ const DEFAULT_CONFIG = {
   sucursal: { nombre:'Sucursal 1', domicilio:'', telefono:'', email:'', activa:true },
   arca: { habilitado:false, ptoVta:1, workerUrl:'' },
   atajos: { buscar:'F1', repetir:'F2', anular:'F3', limpiar:'F4', manual:'F5', descuento:'F6', cobrar:'F10', cerrarcaja:'F11', informex:'F12', borrarLinea:'Delete', cancelar:'Escape' },
-  sync: { supabaseUrl:'', supabaseAnonKey:'', password:'', nombreDispositivo:'', cajaId:null, liveEnabled:false, firebaseConfig:null },
+  // Config de Firebase embebida: así cada caja se conecta sola sin configurar nada a mano.
+  // La apiKey de Firebase es pública por diseño (va en el navegador de todas formas);
+  // lo que protege los datos son las reglas de Firestore, no esta clave.
+  sync: {
+    supabaseUrl:'', supabaseAnonKey:'', password:'', nombreDispositivo:'',
+    cajaId:null, liveEnabled:true,
+    firebaseConfig:{
+      apiKey:"AIzaSyDs545TrWoCPIBoEnMRtIlLrElpxnAKZTc",
+      authDomain:"la-chispa-pos.firebaseapp.com",
+      projectId:"la-chispa-pos",
+      storageBucket:"la-chispa-pos.firebasestorage.app",
+      messagingSenderId:"596209321958",
+      appId:"1:596209321958:web:bfeeaf4e1c5a539481f827"
+    }
+  },
   ia: { workerUrl:'' },
   ticket: {
     encabezado1:'', encabezado2:'',
@@ -2151,6 +2165,12 @@ state.config.sucursal = Object.assign({}, DEFAULT_CONFIG.sucursal, state.config.
 state.config.arca = Object.assign({}, DEFAULT_CONFIG.arca, state.config.arca || {});
 state.config.atajos = Object.assign({}, DEFAULT_CONFIG.atajos, state.config.atajos || {});
 state.config.sync = Object.assign({}, DEFAULT_CONFIG.sync, state.config.sync || {});
+// Un dispositivo que ya venía usando la app tiene guardado firebaseConfig:null y liveEnabled:false,
+// y eso pisaría la config embebida. Si no tiene una config propia válida, se le pone la del código.
+if(!state.config.sync.firebaseConfig || !state.config.sync.firebaseConfig.projectId){
+  state.config.sync.firebaseConfig = DEFAULT_CONFIG.sync.firebaseConfig;
+  state.config.sync.liveEnabled = true;
+}
 state.config.ia = Object.assign({}, DEFAULT_CONFIG.ia, state.config.ia || {});
 if(!Array.isArray(state.config.pos.accesosRapidos)) state.config.pos.accesosRapidos = [];
 state.config.balanza = Object.assign({}, DEFAULT_CONFIG.balanza, state.config.balanza || {});
@@ -6107,7 +6127,9 @@ async function liveSyncConectar(){
 }
 async function liveSyncInit(){
   const cfg = state.config.sync;
-  if(!cfg.liveEnabled || !cfg.firebaseConfig || !cfg.cajaId) return;
+  // La caja solo hace falta para vender (numeración de tickets). Para bajar el catálogo
+  // y mantenerlo sincronizado no es necesaria, así una compu nueva ve los productos al toque.
+  if(!cfg.liveEnabled || !cfg.firebaseConfig) return;
   if(typeof firebase === 'undefined'){ toast('No se pudo cargar la librería de Firebase (revisá la conexión).', 'err', 5000); return; }
   try{
     const app = (firebase.apps && firebase.apps.length) ? firebase.app() : firebase.initializeApp(cfg.firebaseConfig);
@@ -6121,7 +6143,10 @@ async function liveSyncInit(){
   await traerProductos();
   db.collection('productos').onSnapshot(snap=>{ snap.docChanges().forEach(aplicarCambioProducto); }, ()=>{});
   db.collection('sesiones').onSnapshot(()=>renderCajasGrid(), ()=>{});
-  toast('Sincronización en vivo conectada — esta computadora es ' + (state.cajas.find(c=>c.id===cfg.cajaId)||{}).nombre, 'ok');
+  const cajaNom = (state.cajas.find(c=>c.id===cfg.cajaId)||{}).nombre;
+  toast(cajaNom
+    ? 'Sincronización en vivo conectada — esta computadora es ' + cajaNom
+    : 'Catálogo sincronizado. Elegí qué caja es esta computadora en Configuración antes de vender.', 'ok', 5000);
   window.addEventListener('online', actualizarEstadoSync);
   window.addEventListener('offline', actualizarEstadoSync);
 }
@@ -6229,15 +6254,19 @@ async function ventaConSync(cart){
     }
   }
   let ticket = state.nextTicket;
-  try{
-    ticket = await db.runTransaction(async (tx)=>{
-      const ref = db.collection('ticket_counters').doc(String(state.config.sync.cajaId));
-      const doc = await tx.get(ref);
-      const next = (doc.exists ? doc.data().ultimo : 0) + 1;
-      tx.set(ref, { ultimo: next });
-      return next;
-    });
-  }catch(e){}
+  // sin caja elegida no se pide número compartido: se usa el local, para no pisar
+  // el contador de otra caja y terminar con dos tickets con el mismo número
+  if(state.config.sync.cajaId){
+    try{
+      ticket = await db.runTransaction(async (tx)=>{
+        const ref = db.collection('ticket_counters').doc(String(state.config.sync.cajaId));
+        const doc = await tx.get(ref);
+        const next = (doc.exists ? doc.data().ultimo : 0) + 1;
+        tx.set(ref, { ultimo: next });
+        return next;
+      });
+    }catch(e){}
+  }
   return { ok:true, ticket, offline:false };
 }
 async function revertirStockSync(cart){
