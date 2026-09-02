@@ -2189,8 +2189,12 @@ let payBuffer = '';
 let cajaActivaId = null;
 let sesionActivaId = null;
 
+// El catálogo pesa ~2,2 MB con 12.700 productos: reescribirlo en cada persist() (cada venta,
+// cada cambio) traba la app. Se guarda solo cuando realmente cambió.
+let _catalogoSucio = true;
+function marcarCatalogoSucio(){ _catalogoSucio = true; }
 function persist(){
-  save('ao_productos', state.productos);
+  if(_catalogoSucio){ save('ao_productos', state.productos); _catalogoSucio = false; }
   save('ao_ventas', state.ventas);
   save('ao_caja', state.caja);
   save('ao_next_venta', state.nextVentaId);
@@ -2572,6 +2576,7 @@ function saveProduct(){
     productoFinal = {id: state.nextProdId++, ...data};
     state.productos.push(productoFinal);
   }
+  marcarCatalogoSucio();
   persist();
   closeProductModal();
   renderInventario();
@@ -2581,6 +2586,7 @@ function saveProduct(){
 function deleteProduct(id){
   if(!confirm('¿Borrar este producto del inventario?')) return;
   state.productos = state.productos.filter(p=>p.id!==id);
+  marcarCatalogoSucio();
   persist();
   renderInventario();
   borrarProductoNube(id);
@@ -3483,6 +3489,7 @@ async function confirmarVenta(){
     const p = state.productos.find(x=>x.id===l.id);
     if(p) p.stock -= l.cant; // stock local — la nube ya se descontó vía RPC si había conexión
   });
+  marcarCatalogoSucio();
   state.ventas.unshift(venta);
   if(esCtaCte){
     state.ctacte.unshift({id: state.nextCtaCteId++, clienteId: clienteActualId, fecha: venta.fecha, tipo:'Venta fiado', ref:`Ticket #${venta.ticket}`, importe: total});
@@ -4352,6 +4359,7 @@ function guardarCompra(){
     }
   });
 
+  marcarCatalogoSucio();
   persist();
   document.getElementById('fc-items').innerHTML='';
   document.getElementById('fc-numero').value='';
@@ -4705,6 +4713,7 @@ function guardarAjuste(){
     id: state.nextMovStockId++, fecha: new Date().toISOString(),
     productoId: pid, producto: p.nombre, tipo, cantidad: cant, obs
   });
+  marcarCatalogoSucio();
   persist();
   closeAjuste();
   renderInventario();
@@ -4971,6 +4980,7 @@ function guardarNC(){
     obs:`NC #${String(nc.numero).padStart(4,'0')} sobre ticket #${v.ticket} — ${motivo}`,
     importe: -total, cajaId: v.cajaId, sesionId: v.sesionId
   });
+  marcarCatalogoSucio();
   persist();
   closeNC();
   renderFacturacion();
@@ -5578,6 +5588,7 @@ function aplicarActualizacionMasiva(){
     if(op==='stock_sumar') p.stock = Math.max(0, p.stock + stockDelta);
     afectados++;
   });
+  marcarCatalogoSucio();
   persist();
   document.getElementById('bulk-update-overlay').classList.remove('open');
   renderListado(); renderInventario();
@@ -5677,6 +5688,7 @@ function confirmarImportExcel(){
     if(p) Object.assign(p, data);
   });
   nuevos.forEach(data=>state.productos.push({id: state.nextProdId++, ...data}));
+  marcarCatalogoSucio();
   persist();
   document.getElementById('excel-import-overlay').classList.remove('open');
   renderListado(); renderInventario();
@@ -6141,7 +6153,7 @@ async function liveSyncInit(){
   actualizarEstadoSync();
   await empujarCajas();
   await traerProductos();
-  db.collection('productos').onSnapshot(snap=>{ snap.docChanges().forEach(aplicarCambioProducto); }, ()=>{});
+  db.collection('productos').onSnapshot(aplicarLoteProductos, ()=>{});
   db.collection('sesiones').onSnapshot(()=>renderCajasGrid(), ()=>{});
   const cajaNom = (state.cajas.find(c=>c.id===cfg.cajaId)||{}).nombre;
   toast(cajaNom
@@ -6177,6 +6189,7 @@ async function traerProductos(){
         const remoto = filaAProducto(doc.data(), id);
         if(!local) state.productos.push(remoto); else Object.assign(local, remoto);
       });
+      marcarCatalogoSucio();
       persist();
       renderInventario();
       if(document.getElementById('pos-main')?.classList.contains('active')) renderPosGrid();
@@ -6197,6 +6210,15 @@ function aplicarCambioProducto(change){
     const local = state.productos.find(p=>p.id===id);
     if(local) Object.assign(local, remoto); else state.productos.push(remoto);
   }
+}
+// Procesa TODOS los cambios de un snapshot y recién ahí guarda y redibuja UNA sola vez.
+// Antes se hacía por cada documento: con 12.731 productos eso son 12.731 guardados
+// completos + 12.731 redibujados, y el navegador se colgaba.
+function aplicarLoteProductos(snap){
+  const cambios = snap.docChanges();
+  if(!cambios.length) return;
+  cambios.forEach(aplicarCambioProducto);
+  marcarCatalogoSucio();
   persist();
   renderInventario();
   if(document.getElementById('pos-main')?.classList.contains('active')){ renderPosGrid(); renderPosRail(); }
@@ -6382,6 +6404,10 @@ renderInventario();
 renderCajasGrid();
 intentarReconectarImpresora();
 if(state.config.sync.liveEnabled) liveSyncInit();
+
+// Red de seguridad: al cerrar o recargar, guardar el catálogo sí o sí, por si algún
+// cambio no marcó el catálogo como sucio y quedó sin persistir.
+window.addEventListener('beforeunload', ()=>{ try{ save('ao_productos', state.productos); }catch(e){} });
 </script>
 </body>
 </html>
