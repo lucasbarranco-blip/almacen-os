@@ -529,7 +529,7 @@
 <aside id="app-sidebar">
   <div class="brand">
     <b>ALMACÉN OS</b>
-    <span>v0.1 · build 06 — La Chispa</span>
+    <span>v0.1 · build 07 — La Chispa</span>
   </div>
   <nav>
     <button data-view="inventario" class="active">Inventario</button>
@@ -2061,10 +2061,9 @@ try{
 }catch(e){}
 
 let state = {
-  // Con sincronización activa NO se arranca con los productos de demostración:
-  // si el catálogo local está vacío (porque ahora vive en la nube), se espera a que
-  // baje de Firebase. Si arrancara con los de demo, podrían subirse y ensuciar la nube.
-  productos: load('ao_productos', null) || (DEFAULT_CONFIG.sync.liveEnabled ? [] : SEED_PRODUCTS),
+  // Arranca con lo que haya guardado; si no hay nada queda vacío y el catálogo baja
+  // de la nube (ver más abajo, donde se decide si corresponde usar los de demostración).
+  productos: load('ao_productos', null) || [],
   ventas: load('ao_ventas', []),
   caja: load('ao_caja', []),
   nextVentaId: load('ao_next_venta', 1),
@@ -2192,6 +2191,12 @@ state.config.sync = Object.assign({}, DEFAULT_CONFIG.sync, state.config.sync || 
 if(!state.config.sync.firebaseConfig || !state.config.sync.firebaseConfig.projectId){
   state.config.sync.firebaseConfig = DEFAULT_CONFIG.sync.firebaseConfig;
   state.config.sync.liveEnabled = true;
+}
+// Si el catálogo está vacío y NO hay sincronización con la nube, se usan los productos
+// de demostración para no dejar la app pelada. Con sincronización activa se deja vacío
+// a propósito: el catálogo real baja de Firebase en cuanto conecta.
+if(state.productos.length === 0 && !state.config.sync.liveEnabled){
+  state.productos = SEED_PRODUCTS;
 }
 state.config.ia = Object.assign({}, DEFAULT_CONFIG.ia, state.config.ia || {});
 if(!Array.isArray(state.config.pos.accesosRapidos)) state.config.pos.accesosRapidos = [];
