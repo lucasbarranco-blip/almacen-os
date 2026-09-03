@@ -2039,10 +2039,31 @@ function load(key, fallback){
     return raw ? JSON.parse(raw) : fallback;
   }catch(e){ return fallback; }
 }
-function save(key, val){ localStorage.setItem(key, JSON.stringify(val)); }
+function save(key, val){
+  try{
+    localStorage.setItem(key, JSON.stringify(val));
+    return true;
+  }catch(e){
+    // Si el navegador se queda sin espacio, no debe tumbar toda la app:
+    // se avisa y se sigue. Los datos igual viven en la nube.
+    console.warn('No se pudo guardar localmente:', key, e.name);
+    return false;
+  }
+}
+
+// Limpieza: versiones anteriores guardaban el catálogo entero en el navegador y eso
+// llenaba el espacio disponible (QuotaExceededError), haciendo que no se guardara nada más.
+// Si el catálogo guardado es muy grande, se borra: la nube lo repone al conectar.
+try{
+  const catLocal = localStorage.getItem('ao_productos');
+  if(catLocal && catLocal.length > 900000){ localStorage.removeItem('ao_productos'); }
+}catch(e){}
 
 let state = {
-  productos: load('ao_productos', SEED_PRODUCTS),
+  // Con sincronización activa NO se arranca con los productos de demostración:
+  // si el catálogo local está vacío (porque ahora vive en la nube), se espera a que
+  // baje de Firebase. Si arrancara con los de demo, podrían subirse y ensuciar la nube.
+  productos: load('ao_productos', null) || (DEFAULT_CONFIG.sync.liveEnabled ? [] : SEED_PRODUCTS),
   ventas: load('ao_ventas', []),
   caja: load('ao_caja', []),
   nextVentaId: load('ao_next_venta', 1),
@@ -2194,7 +2215,14 @@ let sesionActivaId = null;
 let _catalogoSucio = true;
 function marcarCatalogoSucio(){ _catalogoSucio = true; }
 function persist(){
-  if(_catalogoSucio){ save('ao_productos', state.productos); _catalogoSucio = false; }
+  // El catálogo NO se guarda en el navegador cuando hay sincronización con la nube:
+  // 12.700 productos no entran en el espacio que da el navegador (da QuotaExceededError)
+  // y la nube ya es la fuente de verdad — al abrir la app se bajan de ahí.
+  // Solo se guarda localmente si la app trabaja sin nube (catálogo chico).
+  if(_catalogoSucio && !state.config.sync.liveEnabled){
+    save('ao_productos', state.productos);
+    _catalogoSucio = false;
+  }
   save('ao_ventas', state.ventas);
   save('ao_caja', state.caja);
   save('ao_next_venta', state.nextVentaId);
@@ -6183,18 +6211,18 @@ async function traerProductos(){
   try{
     const snap = await db.collection('productos').get();
     if(!snap.empty){
-      snap.forEach(doc=>{
-        const id = parseInt(doc.id, 10);
-        const local = state.productos.find(p=>p.id===id);
-        const remoto = filaAProducto(doc.data(), id);
-        if(!local) state.productos.push(remoto); else Object.assign(local, remoto);
-      });
+      // La nube manda: se reemplaza el catálogo local completo. Antes se fusionaban
+      // y quedaban conviviendo los productos de prueba con los reales.
+      const remotos = [];
+      snap.forEach(doc=> remotos.push(filaAProducto(doc.data(), parseInt(doc.id,10))) );
+      state.productos = remotos;
       marcarCatalogoSucio();
       persist();
       renderInventario();
       if(document.getElementById('pos-main')?.classList.contains('active')) renderPosGrid();
-    } else if(state.productos.length){
+    } else if(state.productos.length > 0){
       // la nube todavia no tiene catalogo: esta caja se lo manda de arranque
+      // (solo si acá hay productos de verdad; nunca se sube un catálogo vacío)
       const batch = db.batch();
       state.productos.forEach(p=>batch.set(db.collection('productos').doc(String(p.id)), productoAFila(p)));
       await batch.commit();
@@ -6407,7 +6435,9 @@ if(state.config.sync.liveEnabled) liveSyncInit();
 
 // Red de seguridad: al cerrar o recargar, guardar el catálogo sí o sí, por si algún
 // cambio no marcó el catálogo como sucio y quedó sin persistir.
-window.addEventListener('beforeunload', ()=>{ try{ save('ao_productos', state.productos); }catch(e){} });
+window.addEventListener('beforeunload', ()=>{
+  if(!state.config.sync.liveEnabled) save('ao_productos', state.productos);
+});
 </script>
 </body>
 </html>
