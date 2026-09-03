@@ -1299,6 +1299,7 @@
           <select id="cfg-sync-caja"></select>
         </div>
         <button class="btn primary small" onclick="liveSyncConectar()" style="align-self:flex-end;">Conectar esta caja</button>
+        <button class="btn ghost small" onclick="recargarCatalogoNube()" style="align-self:flex-end;">↻ Recargar catálogo</button>
         <span id="live-sync-estado" style="font-size:13px;color:var(--ink-soft);align-self:center;"></span>
       </div>
     </div>
@@ -2315,7 +2316,11 @@ function renderInventario(){
         <button class="btn danger small" onclick="deleteProduct(${p.id})">Borrar</button>
       </td>
     </tr>`;
-  }).join('') || `<tr><td colspan="8"><div class="empty">Sin resultados</div></td></tr>`;
+  }).join('') || `<tr><td colspan="8"><div class="empty">${
+      state.productos.length===0 && state.config.sync.liveEnabled
+        ? 'Bajando catálogo de la nube… Si sigue vacío, entrá a Configuración y tocá "↻ Recargar catálogo".'
+        : 'Sin resultados'
+    }</div></td></tr>`;
 
   // aviso cuando hay más de los que se muestran, para que nadie crea que faltan productos
   const aviso = document.getElementById('inv-aviso');
@@ -6174,8 +6179,13 @@ async function liveSyncInit(){
   try{
     const app = (firebase.apps && firebase.apps.length) ? firebase.app() : firebase.initializeApp(cfg.firebaseConfig);
     db = firebase.firestore(app);
-    try{ await db.enablePersistence({synchronizeTabs:true}); }catch(e){ /* ya habilitado, o el navegador no lo soporta — no es bloqueante */ }
-  }catch(e){ toast('No se pudo conectar a Firebase: '+e.message, 'err', 5000); return; }
+    // El modo offline puede tardar o colgarse (p.ej. con varias pestañas abiertas) y frenaría
+    // todo lo que sigue, incluido bajar el catálogo. Se le da 3 segundos y se sigue igual.
+    await Promise.race([
+      db.enablePersistence({synchronizeTabs:true}).catch(()=>{}),
+      new Promise(r=>setTimeout(r,3000))
+    ]);
+  }catch(e){ toast('No se pudo conectar a Firebase: '+e.message, 'err', 6000); return; }
   liveSyncActivo = true;
   fillCajaSyncSelect();
   actualizarEstadoSync();
@@ -6227,7 +6237,18 @@ async function traerProductos(){
       state.productos.forEach(p=>batch.set(db.collection('productos').doc(String(p.id)), productoAFila(p)));
       await batch.commit();
     }
-  }catch(e){ toast('No se pudo traer el catálogo de la nube: '+e.message, 'warn', 5000); }
+  }catch(e){
+    // Si falla, hay que decirlo: quedarse con la pantalla en cero y sin aviso confunde.
+    toast('No se pudo traer el catálogo: ' + (e.message||e) + ' — probá "Recargar catálogo" en Configuración.', 'err', 9000);
+    console.error('traerProductos falló:', e);
+  }
+}
+// Botón manual para volver a bajar el catálogo si algo falló
+async function recargarCatalogoNube(){
+  if(!db){ toast('No hay conexión con la nube todavía. Recargá la página.', 'err', 5000); return; }
+  toast('Bajando catálogo de la nube…', 'ok', 3000);
+  await traerProductos();
+  toast('Listo: ' + state.productos.length.toLocaleString('es-AR') + ' productos.', 'ok', 4000);
 }
 function aplicarCambioProducto(change){
   const id = parseInt(change.doc.id, 10);
