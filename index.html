@@ -529,7 +529,7 @@
 <aside id="app-sidebar">
   <div class="brand">
     <b>ALMACÉN OS</b>
-    <span>v0.1 · build 09 — La Chispa</span>
+    <span>v0.1 · build 10 — La Chispa</span>
   </div>
   <nav>
     <button data-view="inventario" class="active">Inventario</button>
@@ -2738,15 +2738,42 @@ function calcularCierreZ(ses){
   const porMetodo = PAY_METHODS.map(m=>({
     label: m.label, icon: m.icon,
     total: ventas.filter(v=>v.pago===m.label).reduce((a,v)=>a+v.total,0),
+    cant: ventas.filter(v=>v.pago===m.label).length,
   })).filter(m=>m.total);
+
+  // Rango de notas de crédito (para poder cruzar con el libro IVA ventas)
+  let ncDesde=null, ncHasta=null;
+  ncs.forEach(n=>{
+    const nro = n.arca ? n.arca.nro : null;
+    if(nro==null) return;
+    if(ncDesde===null || nro<ncDesde) ncDesde = nro;
+    if(ncHasta===null || nro>ncHasta) ncHasta = nro;
+  });
+
+  // Arqueo de efectivo: lo que debería haber en la caja vs lo que se contó
+  const efectivoVentas = ventas.filter(v=>v.pago && v.pago.toLowerCase().includes('efectivo'))
+                               .reduce((a,v)=>a+v.total,0);
+  const movCaja = (state.caja||[]).filter(m=>m.sesionId===ses.id);
+  const ingresos = movCaja.filter(m=>m.importe>0 && m.tipo!=='Venta contado').reduce((a,m)=>a+m.importe,0);
+  const egresos  = movCaja.filter(m=>m.importe<0).reduce((a,m)=>a+Math.abs(m.importe),0);
+  const efectivoEsperado = (ses.efectivoApertura||0) + efectivoVentas + ingresos - egresos;
+  const efectivoContado = ses.cierreDetalle && ses.cierreDetalle.efectivo!=null ? ses.cierreDetalle.efectivo : null;
+  const diferencia = efectivoContado!=null ? efectivoContado - efectivoEsperado : null;
 
   return {
     porTipo: Object.values(porTipo).sort((a,b)=>a.tipo-b.tipo),
     ivaPorAlicuota: Object.values(ivaPorAlicuota).sort((a,b)=>b.alic-a.alic),
     cantFiscales: fiscales.length, cantNoFiscales: noFiscales.length, cantNC: ncs.length,
+    ncDesde, ncHasta,
     totalFiscal, totalNoFiscal, totalNC,
     totalGeneral: totalFiscal + totalNoFiscal - totalNC,
     porMetodo,
+    // arqueo
+    aperturaEfectivo: ses.efectivoApertura||0,
+    efectivoVentas, ingresos, egresos, efectivoEsperado, efectivoContado, diferencia,
+    // totales fiscales para el libro IVA
+    netoTotal: Object.values(ivaPorAlicuota).reduce((a,x)=>a+x.neto,0),
+    ivaTotal: Object.values(ivaPorAlicuota).reduce((a,x)=>a+x.iva,0),
   };
 }
 function getSesionActiva(){
@@ -5965,8 +5992,19 @@ function buildCierreZEscPos(s){
   const b = escposBuilder();
   b.init();
   b.align(1); b.bold(true).line(state.config.empresa.fantasia || 'MI NEGOCIO'); b.bold(false);
-  if(state.config.empresa.cuit) b.line('CUIT: '+state.config.empresa.cuit);
+  // Datos del contribuyente: es lo primero que pide un inspector y lo que permite
+  // cruzar este cierre con el libro IVA ventas.
+  const emp = state.config.empresa;
+  if(emp.razonSocial) b.line(emp.razonSocial);
+  if(emp.domicilio) b.line(emp.domicilio);
+  if(emp.localidad || emp.provincia) b.line([emp.localidad, emp.provincia].filter(Boolean).join(', '));
+  if(emp.cuit) b.line('CUIT: '+emp.cuit);
+  if(emp.condicionIVA) b.line(emp.condicionIVA);
+  if(emp.ingresosBrutos) b.line('IIBB: '+emp.ingresosBrutos);
+  if(emp.inicioActividades) b.line('Inicio act.: '+emp.inicioActividades);
+  b.line('Pto. Venta: '+String(state.config.arca?.puntoVenta||'—').padStart(5,'0'));
   b.bold(true).line('CIERRE Z N° '+(s.numeroZ?String(s.numeroZ).padStart(6,'0'):'—')); b.bold(false);
+  b.line('(reporte interno de arqueo)');
   b.align(0);
   b.line('-'.repeat(ANCHO));
   b.line(`Caja: ${caja?caja.nombre:'—'}`);
@@ -5986,7 +6024,11 @@ function buildCierreZEscPos(s){
   } else {
     b.line('Sin comprobantes fiscales');
   }
-  if(z.cantNC) { b.line('-'.repeat(ANCHO)); b.line(`Notas de crédito (${z.cantNC}): -${fmt(z.totalNC)}`); }
+  if(z.cantNC) {
+    b.line('-'.repeat(ANCHO));
+    b.line(`Notas de crédito (${z.cantNC}): -${fmt(z.totalNC)}`);
+    if(z.ncDesde!=null) b.line(`  ${String(z.ncDesde).padStart(8,'0')} a ${String(z.ncHasta).padStart(8,'0')}`);
+  }
   b.line('-'.repeat(ANCHO));
   b.doubleH(true); b.bold(true);
   b.line('TOTAL FISCAL '+fmt(z.totalFiscal - z.totalNC));
@@ -5995,10 +6037,19 @@ function buildCierreZEscPos(s){
     b.line('-'.repeat(ANCHO));
     b.bold(true).line('IVA DISCRIMINADO'); b.bold(false);
     z.ivaPorAlicuota.forEach(a=>b.line(`${a.alic}%  neto ${fmt(a.neto)}  iva ${fmt(a.iva)}`));
+    b.line(`TOTALES  neto ${fmt(z.netoTotal)}  iva ${fmt(z.ivaTotal)}`);
   }
   b.line('-'.repeat(ANCHO));
   b.bold(true).line('MEDIOS DE PAGO'); b.bold(false);
-  z.porMetodo.forEach(m=>b.line(`${m.icon} ${m.label}: ${fmt(m.total)}`));
+  z.porMetodo.forEach(m=>b.line(`${m.icon} ${m.label} (${m.cant}): ${fmt(m.total)}`));
+  // Movimiento de efectivo de la jornada, para justificar lo que quedó en la caja
+  b.line('-'.repeat(ANCHO));
+  b.bold(true).line('MOVIMIENTO DE EFECTIVO'); b.bold(false);
+  b.line(`Fondo apertura   ${fmt(z.aperturaEfectivo)}`);
+  b.line(`Ventas efectivo  ${fmt(z.efectivoVentas)}`);
+  if(z.ingresos) b.line(`Otros ingresos   ${fmt(z.ingresos)}`);
+  if(z.egresos)  b.line(`Egresos/retiros -${fmt(z.egresos)}`);
+  b.bold(true).line(`Esperado en caja ${fmt(z.efectivoEsperado)}`); b.bold(false);
   if(s.cierreDetalle && s.cierreDetalle.length){
     b.line('-'.repeat(ANCHO));
     b.bold(true).line('ARQUEO DE CAJA'); b.bold(false);
@@ -6009,6 +6060,16 @@ function buildCierreZEscPos(s){
       b.line(`  dif.     ${(d.diferencia>=0?'+':'')+fmt(d.diferencia)}`);
     });
   }
+  // Aclaración legal: La Chispa factura con comprobantes electrónicos (CAE), no con
+  // controlador fiscal. Por eso este cierre es un reporte de gestión, no un documento
+  // fiscal. Dejarlo escrito evita que se confunda con el "Z" de un controlador.
+  b.line('-'.repeat(ANCHO));
+  b.align(1);
+  b.line('DOCUMENTO NO FISCAL');
+  b.line('Reporte interno de arqueo.');
+  b.line('Las ventas se respaldan con');
+  b.line('comprobantes electronicos (CAE).');
+  b.align(0);
   b.feed(3);
   b.cut();
   return b.build();
