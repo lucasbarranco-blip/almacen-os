@@ -529,7 +529,7 @@
 <aside id="app-sidebar">
   <div class="brand">
     <b>ALMACÉN OS</b>
-    <span>v0.1 · build 07 — La Chispa</span>
+    <span>v0.1 · build 08 — La Chispa</span>
   </div>
   <nav>
     <button data-view="inventario" class="active">Inventario</button>
@@ -2415,6 +2415,7 @@ function guardarLocal(){
   state.local.largo = parseFloat(document.getElementById('local-largo').value) || 0;
   state.local.ancho = parseFloat(document.getElementById('local-ancho').value) || 0;
   persist();
+  empujarLayout();
   toast('Dimensiones del local guardadas.', 'ok');
 }
 function renderGondolasList(){
@@ -2439,6 +2440,7 @@ function agregarGondola(){
   if(!familia){ toast('Cargá primero al menos una familia de productos en Inventario.', 'err'); return; }
   state.gondolas.push({id: state.nextGondolaId++, nombre, metros, familia});
   persist();
+  empujarLayout();
   document.getElementById('gon-nombre').value = '';
   document.getElementById('gon-metros').value = '';
   renderGondolasList();
@@ -2448,6 +2450,7 @@ function borrarGondola(id){
   if(!confirm('¿Borrar esta góndola del layout?')) return;
   state.gondolas = state.gondolas.filter(g=>g.id!==id);
   persist();
+  empujarLayout();
   renderGondolasList();
 }
 function calcularSugerenciaLayout(){
@@ -6196,6 +6199,7 @@ async function liveSyncInit(){
   actualizarEstadoSync();
   await empujarCajas();
   await traerProductos();
+  await traerLayout();
   db.collection('productos').onSnapshot(aplicarLoteProductos, ()=>{});
   db.collection('sesiones').onSnapshot(()=>renderCajasGrid(), ()=>{});
   const cajaNom = (state.cajas.find(c=>c.id===cfg.cajaId)||{}).nombre;
@@ -6221,6 +6225,33 @@ function productoAFila(p){
     plu: p.plu || null, plu_formato: p.pluFormato || null,
   };
 }
+// --- Layout del local (medidas + góndolas) en la nube ---
+// Se guarda en Firestore y no solo en el navegador: algunos navegadores bloquean el
+// guardado local por sus opciones de privacidad, y además así se ve desde cualquier caja.
+async function empujarLayout(){
+  if(!liveSyncActivo || !db) return;
+  try{
+    await db.collection('config').doc('layout').set({
+      local: state.local || {largo:0, ancho:0},
+      gondolas: state.gondolas || [],
+      nextGondolaId: state.nextGondolaId || 1
+    });
+  }catch(e){ console.warn('No se pudo guardar el layout en la nube:', e); }
+}
+async function traerLayout(){
+  if(!db) return;
+  try{
+    const doc = await db.collection('config').doc('layout').get();
+    if(!doc.exists) return;
+    const d = doc.data();
+    if(d.local) state.local = d.local;
+    if(Array.isArray(d.gondolas)) state.gondolas = d.gondolas;
+    if(d.nextGondolaId) state.nextGondolaId = d.nextGondolaId;
+    persist();
+    if(document.getElementById('view-layout')?.classList.contains('active')) renderLayoutView();
+  }catch(e){ console.warn('No se pudo traer el layout de la nube:', e); }
+}
+
 async function traerProductos(){
   if(!db) return;
   try{
