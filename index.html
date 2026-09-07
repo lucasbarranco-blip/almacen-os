@@ -529,7 +529,7 @@
 <aside id="app-sidebar">
   <div class="brand">
     <b>ALMACÉN OS</b>
-    <span>v0.1 · build 08 — La Chispa</span>
+    <span>v0.1 · build 09 — La Chispa</span>
   </div>
   <nav>
     <button data-view="inventario" class="active">Inventario</button>
@@ -1531,7 +1531,13 @@
       <div class="row" style="margin-top:10px;">
         <div class="field" style="flex:1;min-width:160px;"><label>Nombre</label><input id="gon-nombre" type="text" placeholder="ej: Góndola 3 — pasillo central"></div>
         <div class="field"><label>Metros lineales</label><input id="gon-metros" type="number" min="0" step="0.1" style="width:120px;"></div>
-        <div class="field" style="min-width:200px;"><label>Rubro principal</label><select id="gon-familia"></select></div>
+        <div class="field" style="min-width:180px;"><label>Rubro (como lo llamás vos)</label>
+          <input type="text" id="gon-rubro" placeholder="ej: Limpieza, Alacena, Bebidas...">
+        </div>
+        <div class="field" style="min-width:260px;"><label>¿Qué familias entran en ese rubro?</label>
+          <select id="gon-familia" multiple size="5" style="height:auto;"></select>
+          <div class="subtitle" style="font-size:11.5px;margin-top:4px;">Mantené Ctrl (o Cmd) para elegir varias. Sirve para calcular la sugerencia.</div>
+        </div>
         <button class="btn primary" onclick="agregarGondola()" style="align-self:flex-end;">+ Agregar góndola</button>
       </div>
       <table style="margin-top:14px;">
@@ -2202,6 +2208,13 @@ state.config.ia = Object.assign({}, DEFAULT_CONFIG.ia, state.config.ia || {});
 if(!Array.isArray(state.config.pos.accesosRapidos)) state.config.pos.accesosRapidos = [];
 state.config.balanza = Object.assign({}, DEFAULT_CONFIG.balanza, state.config.balanza || {});
 state.local = state.local || { largo:0, ancho:0 };
+// Góndolas cargadas con el formato anterior (una sola familia) siguen funcionando:
+// se les toma esa familia como nombre del rubro.
+state.gondolas = (state.gondolas||[]).map(g=>{
+  if(!g.rubro) g.rubro = g.familia || 'Sin rubro';
+  if(!g.familias || !g.familias.length) g.familias = g.familia ? [g.familia] : [];
+  return g;
+});
 state.gondolas = state.gondolas || [];
 state.nextGondolaId = state.nextGondolaId || 1;
 let cart = [];
@@ -2421,28 +2434,39 @@ function guardarLocal(){
 function renderGondolasList(){
   const tb = document.getElementById('gondolas-body');
   const familias = familiasUnicas();
-  tb.innerHTML = state.gondolas.map(g=>`
+  tb.innerHTML = state.gondolas.map(g=>{
+    const fams = g.familias && g.familias.length ? g.familias : (g.familia ? [g.familia] : []);
+    const rubro = g.rubro || g.familia || 'Sin rubro';
+    return `
     <tr>
       <td>${g.nombre}</td>
-      <td><span class="chip" style="background:${colorFamilia(g.familia,familias)}22;color:${colorFamilia(g.familia,familias)};">${g.familia||'Sin rubro'}</span></td>
+      <td>
+        <span class="chip" style="background:${colorFamilia(rubro,familias)}22;color:${colorFamilia(rubro,familias)};">${rubro}</span>
+        <div class="subtitle" style="font-size:11px;margin-top:3px;">${fams.length} familia(s): ${fams.slice(0,3).join(', ')}${fams.length>3?' +'+(fams.length-3):''}</div>
+      </td>
       <td class="mono">${Number(g.metros).toFixed(1)} m</td>
       <td><button class="btn danger small" onclick="borrarGondola(${g.id})">Borrar</button></td>
-    </tr>`).join('') || `<tr><td colspan="4" style="color:var(--ink-soft);">Todavía no cargaste ninguna góndola.</td></tr>`;
+    </tr>`;
+  }).join('') || `<tr><td colspan="4" style="color:var(--ink-soft);">Todavía no cargaste ninguna góndola.</td></tr>`;
   const total = state.gondolas.reduce((a,g)=>a+Number(g.metros||0),0);
   document.getElementById('gondolas-total').textContent = `Total cargado: ${total.toFixed(1)} metros lineales en ${state.gondolas.length} góndola(s).`;
 }
 function agregarGondola(){
   const nombre = document.getElementById('gon-nombre').value.trim();
   const metros = parseFloat(document.getElementById('gon-metros').value);
-  const familia = document.getElementById('gon-familia').value;
+  const rubro = document.getElementById('gon-rubro').value.trim();
+  const familias = Array.from(document.getElementById('gon-familia').selectedOptions).map(o=>o.value);
   if(!nombre){ toast('Ponele un nombre a la góndola.', 'err'); return; }
   if(!(metros>0)){ toast('Los metros lineales tienen que ser mayores a 0.', 'err'); return; }
-  if(!familia){ toast('Cargá primero al menos una familia de productos en Inventario.', 'err'); return; }
-  state.gondolas.push({id: state.nextGondolaId++, nombre, metros, familia});
+  if(!rubro){ toast('Ponele un nombre al rubro (ej: Limpieza, Bebidas).', 'err'); return; }
+  if(!familias.length){ toast('Elegí al menos una familia para ese rubro, si no no se puede calcular la sugerencia.', 'err', 5000); return; }
+  state.gondolas.push({id: state.nextGondolaId++, nombre, metros, rubro, familias, familia: familias[0]});
   persist();
   empujarLayout();
   document.getElementById('gon-nombre').value = '';
   document.getElementById('gon-metros').value = '';
+  document.getElementById('gon-rubro').value = '';
+  Array.from(document.getElementById('gon-familia').options).forEach(o=>o.selected=false);
   renderGondolasList();
   toast('Góndola agregada.', 'ok');
 }
@@ -2460,6 +2484,15 @@ function calcularSugerenciaLayout(){
     document.getElementById('layout-resultado').innerHTML = `<div class="subtitle">Cargá al menos una góndola antes de calcular la sugerencia.</div>`;
     return;
   }
+  // Cada góndola define un rubro propio (ej. "Limpieza") que agrupa varias familias
+  // del catálogo. Las ventas se suman por rubro, no por familia suelta.
+  const familiaARubro = {};
+  state.gondolas.forEach(g=>{
+    const rubro = g.rubro || g.familia || 'Sin rubro';
+    const fams = g.familias && g.familias.length ? g.familias : (g.familia ? [g.familia] : []);
+    fams.forEach(f=>{ familiaARubro[f] = rubro; });
+  });
+
   const ventasPorFamilia = {};
   let totalVentas = 0, ventasConsideradas = 0;
   state.ventas.forEach(v=>{
@@ -2467,7 +2500,8 @@ function calcularSugerenciaLayout(){
     ventasConsideradas++;
     (v.items||[]).forEach(it=>{
       const p = state.productos.find(x=>x.id===it.id);
-      const fam = p ? (p.familia||'Sin rubro') : 'Sin rubro';
+      const famReal = p ? (p.familia||'Sin rubro') : 'Sin rubro';
+      const fam = familiaARubro[famReal] || famReal;  // agrupa por rubro si está mapeada
       const monto = (it.precio||0) * (it.cant||0);
       ventasPorFamilia[fam] = (ventasPorFamilia[fam]||0) + monto;
       totalVentas += monto;
@@ -2479,7 +2513,10 @@ function calcularSugerenciaLayout(){
   }
   const metrosPorFamilia = {};
   const totalMetros = state.gondolas.reduce((a,g)=>a+Number(g.metros||0),0);
-  state.gondolas.forEach(g=>{ metrosPorFamilia[g.familia] = (metrosPorFamilia[g.familia]||0) + Number(g.metros||0); });
+  state.gondolas.forEach(g=>{
+    const rubro = g.rubro || g.familia || 'Sin rubro';
+    metrosPorFamilia[rubro] = (metrosPorFamilia[rubro]||0) + Number(g.metros||0);
+  });
   const todasFamilias = Array.from(new Set([...Object.keys(ventasPorFamilia), ...Object.keys(metrosPorFamilia)]));
   const filas = todasFamilias.map(f=>{
     const ventas = ventasPorFamilia[f]||0;
