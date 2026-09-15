@@ -529,7 +529,7 @@
 <aside id="app-sidebar">
   <div class="brand">
     <b>ALMACÉN OS</b>
-    <span>v0.1 · build 10 — La Chispa</span>
+    <span>v0.1 · build 11 — La Chispa</span>
   </div>
   <nav>
     <button data-view="inventario" class="active">Inventario</button>
@@ -2106,7 +2106,10 @@ const DEFAULT_CONFIG = {
   // Defaults tomados de la configuración real de La Chispa en POSBerry
   empresa: {
     razonSocial:'', fantasia:'LA CHISPA', cuit:'', condicionIVA:'Monotributista', domicilio:'',
-    inicioActividades:'', ingresosBrutos:'', provincia:'Provincia de Buenos Aires', localidad:''
+    inicioActividades:'', ingresosBrutos:'', provincia:'Provincia de Buenos Aires', localidad:'',
+    // datos que exige el encabezado fiscal (se ven en el Z del controlador)
+    telefonoDefensa:'0800-222-9042 (LEY 15037)', orientacionConsumidor:'ORIENTACION AL CONSUMIDOR BS. AS.',
+    habilitacion:'COMPROBANTES CLASE "A"'
   },
   impuestos: { ivaDefault:21, iibbAlicuota:3.5, iibbActivo:true },
   pos: {
@@ -2735,6 +2738,34 @@ function calcularCierreZ(ses){
   const totalNoFiscal = noFiscales.reduce((a,v)=>a+v.total,0);
   const totalNC = ncs.reduce((a,n)=>a+n.total,0);
 
+  // --- Ventas por rubro/departamento (como el "RUBROS/DEPARTAMENTOS" del informe viejo) ---
+  const porRubro = {};
+  ventas.forEach(v=>{
+    (v.items||[]).forEach(it=>{
+      const p = state.productos.find(x=>x.id===it.id);
+      const fam = p ? (p.familia||'VARIOS') : 'VARIOS';
+      if(!porRubro[fam]) porRubro[fam] = {rubro:fam, monto:0, cant:0};
+      porRubro[fam].monto += (it.precio||0)*(it.cant||0);
+      porRubro[fam].cant  += (it.cant||0);
+    });
+  });
+
+  // --- Anulados / cancelados y descuentos (como "COMP. CANCELADOS" y "DESCUENTOS") ---
+  const anulados = (state.ventasAnuladas||[]).filter(v=>v.sesionId===ses.id);
+  const totalDescuentos = ventas.reduce((a,v)=>a+(v.descuentos||0),0);
+
+  // --- Gravado / exento (el informe fiscal los separa) ---
+  let gravado=0, exento=0, noGravado=0;
+  fiscales.forEach(v=>{
+    gravado += v.arca.impNeto||0;
+    (v.arca.ivaArr||[]).forEach(x=>{ if(x.alic===0) exento += x.baseImp; });
+  });
+
+  // --- Ingresos y egresos varios de la jornada (movimientos de caja que no son ventas) ---
+  const movCajaAll = (state.caja||[]).filter(m=>m.sesionId===ses.id && m.tipo!=='Venta contado');
+  const ingresosVarios = movCajaAll.filter(m=>m.importe>0);
+  const egresosVarios  = movCajaAll.filter(m=>m.importe<0);
+
   const porMetodo = PAY_METHODS.map(m=>({
     label: m.label, icon: m.icon,
     total: ventas.filter(v=>v.pago===m.label).reduce((a,v)=>a+v.total,0),
@@ -2748,6 +2779,13 @@ function calcularCierreZ(ses){
     if(nro==null) return;
     if(ncDesde===null || nro<ncDesde) ncDesde = nro;
     if(ncHasta===null || nro>ncHasta) ncHasta = nro;
+  });
+
+  // Rango de presupuestos / no fiscales
+  let npDesde=null, npHasta=null;
+  noFiscales.forEach(v=>{
+    if(npDesde===null || v.ticket<npDesde) npDesde = v.ticket;
+    if(npHasta===null || v.ticket>npHasta) npHasta = v.ticket;
   });
 
   // Arqueo de efectivo: lo que debería haber en la caja vs lo que se contó
@@ -2764,10 +2802,16 @@ function calcularCierreZ(ses){
     porTipo: Object.values(porTipo).sort((a,b)=>a.tipo-b.tipo),
     ivaPorAlicuota: Object.values(ivaPorAlicuota).sort((a,b)=>b.alic-a.alic),
     cantFiscales: fiscales.length, cantNoFiscales: noFiscales.length, cantNC: ncs.length,
-    ncDesde, ncHasta,
+    ncDesde, ncHasta, npDesde, npHasta,
     totalFiscal, totalNoFiscal, totalNC,
     totalGeneral: totalFiscal + totalNoFiscal - totalNC,
     porMetodo,
+    // detalle tipo informe fiscal
+    porRubro: Object.values(porRubro).sort((a,b)=>b.monto-a.monto),
+    cantAnulados: anulados.length,
+    totalDescuentos, gravado, exento, noGravado,
+    ingresosVarios, egresosVarios,
+    listaFiscales: fiscales, listaNoFiscales: noFiscales,
     // arqueo
     aperturaEfectivo: ses.efectivoApertura||0,
     efectivoVentas, ingresos, egresos, efectivoEsperado, efectivoContado, diferencia,
@@ -5988,85 +6032,151 @@ function reimprimirTicket(){
 function buildCierreZEscPos(s){
   const z = s.cierreZ || calcularCierreZ(s);
   const caja = state.cajas.find(c=>c.id===s.cajaId);
+  const emp = state.config.empresa;
   const ANCHO = 32;
   const b = escposBuilder();
+  const pad = (izq, der) => {
+    const d = String(der);
+    const i = String(izq).slice(0, Math.max(0, ANCHO - d.length - 1));
+    return i + ' '.repeat(Math.max(1, ANCHO - i.length - d.length)) + d;
+  };
+  const nro8 = n => String(n==null?0:n).padStart(8,'0');
+
   b.init();
-  b.align(1); b.bold(true).line(state.config.empresa.fantasia || 'MI NEGOCIO'); b.bold(false);
-  // Datos del contribuyente: es lo primero que pide un inspector y lo que permite
-  // cruzar este cierre con el libro IVA ventas.
-  const emp = state.config.empresa;
-  if(emp.razonSocial) b.line(emp.razonSocial);
-  if(emp.domicilio) b.line(emp.domicilio);
-  if(emp.localidad || emp.provincia) b.line([emp.localidad, emp.provincia].filter(Boolean).join(', '));
-  if(emp.cuit) b.line('CUIT: '+emp.cuit);
-  if(emp.condicionIVA) b.line(emp.condicionIVA);
-  if(emp.ingresosBrutos) b.line('IIBB: '+emp.ingresosBrutos);
-  if(emp.inicioActividades) b.line('Inicio act.: '+emp.inicioActividades);
-  b.line('Pto. Venta: '+String(state.config.arca?.puntoVenta||'—').padStart(5,'0'));
-  b.bold(true).line('CIERRE Z N° '+(s.numeroZ?String(s.numeroZ).padStart(6,'0'):'—')); b.bold(false);
-  b.line('(reporte interno de arqueo)');
+  // ---------- ENCABEZADO FISCAL ----------
+  b.align(1);
+  b.bold(true).line((emp.fantasia||'MI NEGOCIO').toUpperCase()); b.bold(false);
   b.align(0);
+  if(emp.razonSocial) b.line(emp.razonSocial.toUpperCase());
+  if(emp.cuit) b.line('C.U.I.T. Nro.: '+emp.cuit);
+  if(emp.ingresosBrutos) b.line('Ing. Brutos: '+emp.ingresosBrutos);
+  if(emp.domicilio) b.line(emp.domicilio.toUpperCase());
+  if(emp.localidad || emp.provincia) b.line([emp.localidad, emp.provincia].filter(Boolean).join(' ').toUpperCase());
+  if(emp.orientacionConsumidor) b.line(emp.orientacionConsumidor);
+  if(emp.telefonoDefensa) b.line('TELEFONO: '+emp.telefonoDefensa);
+  if(emp.inicioActividades) b.line('Inicio de Actividades: '+emp.inicioActividades);
+  if(emp.condicionIVA) b.line('IVA '+emp.condicionIVA);
+  if(emp.habilitacion) b.line('Habilitacion: '+emp.habilitacion);
   b.line('-'.repeat(ANCHO));
-  b.line(`Caja: ${caja?caja.nombre:'—'}`);
-  b.line(`Apertura: ${new Date(s.fechaApertura).toLocaleString('es-AR')}`);
-  b.line(`Cierre: ${s.fechaCierre?new Date(s.fechaCierre).toLocaleString('es-AR'):'—'}`);
-  b.line(`Operador: ${s.cerradaPor||'—'}`);
+
+  // ---------- IDENTIFICACION DEL INFORME ----------
+  b.align(1);
+  b.bold(true).line('INFORME DIARIO DE CIERRE'); b.bold(false);
+  b.line('Nro. '+String(s.numeroZ||0).padStart(8,'0'));
+  b.line('P.V. Nro. '+String(state.config.arca?.puntoVenta||0).padStart(5,'0'));
+  b.align(0);
+  b.line(pad('Fecha: '+(s.fechaCierre?new Date(s.fechaCierre).toLocaleDateString('es-AR'):'—'),
+             'Hora: '+(s.fechaCierre?new Date(s.fechaCierre).toLocaleTimeString('es-AR'):'—')));
+  b.line('Caja: '+(caja?caja.nombre:'—')+'  Op: '+(s.cerradaPor||'—'));
+  b.line('Apertura: '+new Date(s.fechaApertura).toLocaleString('es-AR'));
   b.line('-'.repeat(ANCHO));
-  b.bold(true).line('COMPROBANTES FISCALES'); b.bold(false);
+
+  // ---------- COMPROBANTES FISCALES ----------
+  b.align(1); b.bold(true).line('COMPROBANTES FISCALES'); b.bold(false); b.align(0);
   if(z.porTipo.length){
     z.porTipo.forEach(t=>{
-      b.line(`${t.label}  x${t.cant}`);
-      b.line(`  ${String(t.desde).padStart(8,'0')} a ${String(t.hasta).padStart(8,'0')}`);
-      b.line(`  Neto ${fmt(t.neto)}`);
-      b.line(`  IVA  ${fmt(t.iva)}`);
-      b.line(`  Total ${fmt(t.total)}`);
+      b.line('');
+      b.align(1); b.line(t.label.toUpperCase()); b.align(0);
+      b.line(pad('PRIMER COMPROB.', nro8(t.desde)));
+      b.line(pad('ULTIMO COMPROB.', nro8(t.hasta)));
+      b.line(pad('GRAVADO', fmt(t.neto)));
+      b.line(pad('NO GRAVADO', fmt(0)));
+      b.line(pad('EXENTO', fmt(0)));
+      b.line(pad('DESCUENTOS', fmt(z.totalDescuentos||0)));
+      b.line(pad('COMP. GENERADOS', nro8(t.cant)));
+      b.line(pad('COMP. CANCELADOS', nro8(z.cantAnulados||0)));
     });
-  } else {
-    b.line('Sin comprobantes fiscales');
-  }
-  if(z.cantNC) {
-    b.line('-'.repeat(ANCHO));
-    b.line(`Notas de crédito (${z.cantNC}): -${fmt(z.totalNC)}`);
-    if(z.ncDesde!=null) b.line(`  ${String(z.ncDesde).padStart(8,'0')} a ${String(z.ncHasta).padStart(8,'0')}`);
-  }
-  b.line('-'.repeat(ANCHO));
-  b.doubleH(true); b.bold(true);
-  b.line('TOTAL FISCAL '+fmt(z.totalFiscal - z.totalNC));
-  b.doubleH(false); b.bold(false);
+  } else { b.line('Sin comprobantes fiscales'); }
+
+  // ---------- DISCRIMINACION DEL IVA ----------
   if(z.ivaPorAlicuota.length){
-    b.line('-'.repeat(ANCHO));
-    b.bold(true).line('IVA DISCRIMINADO'); b.bold(false);
-    z.ivaPorAlicuota.forEach(a=>b.line(`${a.alic}%  neto ${fmt(a.neto)}  iva ${fmt(a.iva)}`));
-    b.line(`TOTALES  neto ${fmt(z.netoTotal)}  iva ${fmt(z.ivaTotal)}`);
+    b.line('');
+    b.bold(true).line('DISCRIMINACION DEL IVA'); b.bold(false);
+    z.ivaPorAlicuota.forEach(a=>b.line(pad(Number(a.alic).toFixed(2)+'%', fmt(a.iva))));
+    b.line(pad('TOTAL IMPORTE DE IVA', fmt(z.ivaTotal)));
   }
+  b.line('');
+  b.bold(true).line(pad('IMPORTE TOTAL', fmt(z.totalFiscal))); b.bold(false);
+
+  // ---------- INFORMACION GLOBAL ----------
   b.line('-'.repeat(ANCHO));
-  b.bold(true).line('MEDIOS DE PAGO'); b.bold(false);
-  z.porMetodo.forEach(m=>b.line(`${m.icon} ${m.label} (${m.cant}): ${fmt(m.total)}`));
-  // Movimiento de efectivo de la jornada, para justificar lo que quedó en la caja
+  b.align(1); b.bold(true).line('INFORMACION GLOBAL'); b.bold(false); b.align(0);
+  b.line(pad('GRAVADO', fmt(z.gravado)));
+  b.line(pad('NO GRAVADO', fmt(z.noGravado)));
+  b.line(pad('EXENTO', fmt(z.exento)));
+  b.line(pad('DESCUENTOS', fmt(z.totalDescuentos)));
+  b.line(pad('COMP. GENERADOS', nro8(z.cantFiscales)));
+  b.line(pad('COMP. CANCELADOS', nro8(z.cantAnulados)));
+  if(z.cantNC){
+    b.line(pad('NOTAS DE CREDITO ('+z.cantNC+')', '-'+fmt(z.totalNC)));
+    if(z.ncDesde!=null) b.line('  '+nro8(z.ncDesde)+' a '+nro8(z.ncHasta));
+  }
+  b.bold(true).line(pad('TOTAL COMP. FISCALES', fmt(z.totalFiscal - z.totalNC))); b.bold(false);
+
+  // ---------- NO FISCALES (PRESUPUESTOS) ----------
   b.line('-'.repeat(ANCHO));
-  b.bold(true).line('MOVIMIENTO DE EFECTIVO'); b.bold(false);
-  b.line(`Fondo apertura   ${fmt(z.aperturaEfectivo)}`);
-  b.line(`Ventas efectivo  ${fmt(z.efectivoVentas)}`);
-  if(z.ingresos) b.line(`Otros ingresos   ${fmt(z.ingresos)}`);
-  if(z.egresos)  b.line(`Egresos/retiros -${fmt(z.egresos)}`);
-  b.bold(true).line(`Esperado en caja ${fmt(z.efectivoEsperado)}`); b.bold(false);
-  if(s.cierreDetalle && s.cierreDetalle.length){
+  b.align(1); b.bold(true).line('COMPROBANTES NO FISCALES'); b.bold(false); b.align(0);
+  b.line(pad('PRIMER COMPROB.', nro8(z.npDesde)));
+  b.line(pad('ULTIMO COMPROB.', nro8(z.npHasta)));
+  b.line(pad('CANTIDAD COMPROB.', nro8(z.cantNoFiscales)));
+  b.line(pad('IMPORTE NO FISCALES', fmt(z.totalNoFiscal)));
+
+  // ---------- MEDIOS DE PAGO ----------
+  b.line('-'.repeat(ANCHO));
+  b.align(1); b.bold(true).line('PAGOS'); b.bold(false); b.align(0);
+  z.porMetodo.forEach(m=>{
+    b.line(m.label.toUpperCase());
+    b.line(pad('  Operac.: '+m.cant, fmt(m.total)));
+  });
+  b.bold(true).line(pad('ACUMULADO', fmt(z.totalGeneral))); b.bold(false);
+
+  // ---------- RUBROS / DEPARTAMENTOS ----------
+  if(z.porRubro && z.porRubro.length){
     b.line('-'.repeat(ANCHO));
-    b.bold(true).line('ARQUEO DE CAJA'); b.bold(false);
+    b.align(1); b.bold(true).line('RUBROS / DEPARTAMENTOS'); b.bold(false); b.align(0);
+    z.porRubro.slice(0,25).forEach((r,i)=>{
+      b.line('('+(i+1)+') '+r.rubro.toUpperCase().slice(0,ANCHO-5));
+      b.line(pad('  Cant.: '+r.cant.toFixed(2), fmt(r.monto)));
+    });
+    const totRub = z.porRubro.reduce((a,r)=>a+r.monto,0);
+    b.bold(true).line(pad('ACUMULADO RUBROS', fmt(totRub))); b.bold(false);
+  }
+
+  // ---------- INGRESOS / EGRESOS VARIOS ----------
+  b.line('-'.repeat(ANCHO));
+  b.bold(true).line('INGRESOS VARIOS'); b.bold(false);
+  if(z.ingresosVarios && z.ingresosVarios.length){
+    z.ingresosVarios.forEach(m=>b.line(pad((m.tipo||'Ingreso').slice(0,18), fmt(m.importe))));
+  } else { b.line('  sin movimientos'); }
+  b.bold(true).line('EGRESOS VARIOS'); b.bold(false);
+  if(z.egresosVarios && z.egresosVarios.length){
+    z.egresosVarios.forEach(m=>b.line(pad((m.tipo||'Egreso').slice(0,18), fmt(Math.abs(m.importe)))));
+  } else { b.line('  sin movimientos'); }
+
+  // ---------- SALDO DE CAJA / ARQUEO ----------
+  b.line('-'.repeat(ANCHO));
+  b.align(1); b.bold(true).line('SALDO DE CAJA'); b.bold(false); b.align(0);
+  b.line(pad('Fondo apertura', fmt(z.aperturaEfectivo)));
+  b.line(pad('Ventas efectivo', fmt(z.efectivoVentas)));
+  if(z.ingresos) b.line(pad('Otros ingresos', fmt(z.ingresos)));
+  if(z.egresos)  b.line(pad('Egresos', '-'+fmt(z.egresos)));
+  b.bold(true).line(pad('ESPERADO EN CAJA', fmt(z.efectivoEsperado))); b.bold(false);
+  if(s.cierreDetalle && s.cierreDetalle.length){
+    b.line('');
+    b.bold(true).line('ARQUEO'); b.bold(false);
     s.cierreDetalle.forEach(d=>{
       b.line(d.metodo);
-      b.line(`  esperado ${fmt(d.esperado)}`);
-      b.line(`  contado  ${fmt(d.contado)}`);
-      b.line(`  dif.     ${(d.diferencia>=0?'+':'')+fmt(d.diferencia)}`);
+      b.line(pad('  esperado', fmt(d.esperado)));
+      b.line(pad('  contado', fmt(d.contado)));
+      b.line(pad('  diferencia', (d.diferencia>=0?'+':'')+fmt(d.diferencia)));
     });
   }
-  // Aclaración legal: La Chispa factura con comprobantes electrónicos (CAE), no con
-  // controlador fiscal. Por eso este cierre es un reporte de gestión, no un documento
-  // fiscal. Dejarlo escrito evita que se confunda con el "Z" de un controlador.
+
+  // ---------- PIE ----------
   b.line('-'.repeat(ANCHO));
   b.align(1);
   b.line('DOCUMENTO NO FISCAL');
-  b.line('Reporte interno de arqueo.');
+  b.line('Reporte interno de gestion.');
   b.line('Las ventas se respaldan con');
   b.line('comprobantes electronicos (CAE).');
   b.align(0);
