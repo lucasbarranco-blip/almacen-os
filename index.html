@@ -273,6 +273,30 @@
   .rail-item:hover{background:#EAF3DE;}
   .rail-item.active{background:var(--az-primary-soft);color:var(--az-primary-ink);}
 
+  /* Panel de funciones del POS: reemplaza la grilla de productos.
+     Botones grandes pensados para pantalla táctil (mínimo ~64px de alto). */
+  .pos-funcs{flex:1;overflow-y:auto;padding:18px;background:var(--paper);display:flex;flex-direction:column;gap:14px;}
+  .pos-funcs-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;align-content:start;}
+  .fbtn{
+    background:#fff;border:2px solid var(--line);border-radius:14px;padding:14px 10px;cursor:pointer;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:76px;
+    font-family:'Baloo 2',sans-serif;transition:transform .08s, border-color .1s, background .1s;
+  }
+  .fbtn b{font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:600;color:var(--green);}
+  .fbtn span{font-size:13.5px;font-weight:600;color:var(--ink);text-align:center;line-height:1.2;}
+  .fbtn:hover{border-color:var(--green);background:var(--green-soft);}
+  .fbtn:active{transform:scale(.97);}
+  .fbtn.ok{border-color:var(--green);background:var(--green);}
+  .fbtn.ok b, .fbtn.ok span{color:#fff;}
+  .fbtn.ok:hover{background:var(--green-dark);}
+  .fbtn.warn{border-color:var(--rust-soft);}
+  .fbtn.warn b{color:var(--rust);}
+  .fbtn.warn:hover{border-color:var(--rust);background:var(--rust-soft);}
+  .pos-funcs-tip{
+    background:#fff;border:1px dashed var(--line);border-radius:12px;padding:12px 14px;
+    font-family:'Nunito Sans',sans-serif;font-size:13px;color:var(--ink-soft);line-height:1.5;
+  }
+
   .pos-products{flex:1;overflow-y:auto;padding:18px;display:grid;grid-template-columns:repeat(auto-fill,minmax(158px,1fr));gap:12px;align-content:start;background:var(--paper);}
   .product-card{
     background:#fff;border-radius:14px;padding:13px 13px 12px;cursor:pointer;transition:transform .1s, border-color .1s;
@@ -529,7 +553,7 @@
 <aside id="app-sidebar">
   <div class="brand">
     <b>ALMACÉN OS</b>
-    <span>v0.1 · build 12 — La Chispa</span>
+    <span>v0.1 · build 13 — La Chispa</span>
   </div>
   <nav>
     <button data-view="inventario" class="active">Inventario</button>
@@ -890,7 +914,26 @@
         </div>
         <div class="pos-body">
           <div class="pos-rail" id="pos-rail"></div>
-          <div class="pos-products" id="pos-products"></div>
+          <div class="pos-funcs" id="pos-funcs">
+            <div class="pos-funcs-grid">
+              <button class="fbtn" onclick="fkeyAgregarMismo()"><b>F2</b><span>Repetir último</span></button>
+              <button class="fbtn" onclick="fkeyAnularUltimo()"><b>F3</b><span>Anular último</span></button>
+              <button class="fbtn warn" onclick="fkeyLimpiarTicket()"><b>F4</b><span>Limpiar ticket</span></button>
+              <button class="fbtn" onclick="fkeyArticuloManual()"><b>F5</b><span>Artículo manual</span></button>
+              <button class="fbtn" onclick="fkeyDescuentoRecargo()"><b>F6</b><span>Desc./Recargo</span></button>
+              <button class="fbtn" onclick="openSelCliente()"><b>F7</b><span>Cliente</span></button>
+              <button class="fbtn" onclick="document.getElementById('pos-search').focus()"><b>F8</b><span>Buscar producto</span></button>
+              <button class="fbtn" onclick="toggleFullscreenPOS()"><b>F9</b><span>Pantalla completa</span></button>
+              <button class="fbtn ok" onclick="fkeyCobrar()"><b>F10</b><span>Cobrar</span></button>
+              <button class="fbtn warn" onclick="fkeyCerrarCaja()"><b>F11</b><span>Cerrar caja + Z</span></button>
+              <button class="fbtn" onclick="fkeyInformeX()"><b>F12</b><span>Informe X</span></button>
+              <button class="fbtn" onclick="openAcciones()"><b>⋮</b><span>Más acciones</span></button>
+            </div>
+            <div class="pos-funcs-tip">
+              Escaneá el código de barras en el buscador de arriba.<br>
+              Para cargar varias unidades: <b>cantidad * código</b> (ej. <span class="mono">2*779...</span>)
+            </div>
+          </div>
           <div class="pos-cart-panel">
             <div class="pos-cart-hang">
               <div class="pos-cart-ticket">
@@ -3201,8 +3244,9 @@ function setPosCategoria(f){
 /* --- grilla de productos --- */
 const POS_TOPE = 120; // tope de tarjetas dibujadas: con 12.700 productos el POS se cuelga si las dibuja todas
 function renderPosGrid(){
-  const q = (document.getElementById('pos-search').value || '').toLowerCase();
   const grid = document.getElementById('pos-products');
+  if(!grid) return;  // el POS ahora muestra el panel de funciones, no la grilla de productos
+  const q = (document.getElementById('pos-search').value || '').toLowerCase();
   let results = state.productos.filter(p =>
     (p.nombre.toLowerCase().includes(q) || p.codigo.includes(q)) &&
     (posCategoriaActiva===null || p.familia===posCategoriaActiva)
