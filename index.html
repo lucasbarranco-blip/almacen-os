@@ -318,7 +318,7 @@
     background:var(--az-primary-soft);color:var(--az-primary-ink);
   }
   .product-card.low .pstock{background:#FBEFD2;color:#8A5A0B;}
-  .product-card.agotado{cursor:not-allowed;opacity:.55;}
+  .product-card.agotado{opacity:.7;}
   .product-card.agotado .pstock{background:var(--az-danger-soft);color:var(--az-danger);}
   .product-card.pinned{border-color:var(--az-accent);}
 
@@ -557,7 +557,7 @@
 <aside id="app-sidebar">
   <div class="brand">
     <b>ALMACÉN OS</b>
-    <span>v0.1 · build 14 — La Chispa</span>
+    <span>v0.1 · build 15 — La Chispa</span>
   </div>
   <nav>
     <button data-view="inventario" class="active">Inventario</button>
@@ -3264,10 +3264,10 @@ function renderPosGrid(){
   results = results.slice(0, POS_TOPE);
   grid.innerHTML = results.map(p=>{
     const pinned = rapidos.includes(p.id);
-    const agotado = p.stock < 1;
+    const agotado = p.stock < 1;   // solo para mostrarlo en rojo; igual se puede vender
     const low = !agotado && p.stock <= p.stockMin;
     return `
-    <div class="product-card ${low?'low':''} ${agotado?'agotado':''} ${pinned?'pinned':''}" onclick="${agotado?'':'addToCart('+p.id+')'}">
+    <div class="product-card ${low?'low':''} ${agotado?'agotado':''} ${pinned?'pinned':''}" onclick="addToCart(${p.id})">
       <div class="pnm">${p.nombre}</div>
       <div class="pcode">${p.codigo}</div>
       <div class="pbottom">
@@ -3290,12 +3290,15 @@ function addToCart(id){
   const p = state.productos.find(x=>x.id===id);
   if(!p) return;
   const line = state.config.pos.agruparIdenticos ? cart.find(l=>l.id===id) : null;
+  // Se permite vender aunque no haya stock: el stock queda en negativo y eso queda
+  // como señal de que hay que reponer o ajustar. Nunca se frena una venta real.
   if(line){
-    if(line.cant < p.stock) line.cant++; else { alert('Sin stock disponible.'); return; }
+    line.cant++;
   } else {
-    if(p.stock<1){ alert('Sin stock disponible.'); return; }
     cart.push({id:p.id, nombre:p.nombre, precio:p.venta, cant:1, iva: (p.iva!==undefined ? p.iva : state.config.impuestos.ivaDefault)});
   }
+  const enCarrito = (cart.find(l=>l.id===id)||{}).cant || 0;
+  if(p.stock - enCarrito < 0) toast(`${p.nombre}: queda en stock negativo (${p.stock - enCarrito}). Se vende igual.`, 'warn', 3000);
   selectedLineId = id;
   lastAddedProductId = id;
   renderPosCart();
@@ -3378,7 +3381,8 @@ function keyInput(k){
       if(keyMode==='cant'){
         if(!cfg.puedeEditarCantidades){ alert('La edición de cantidades está deshabilitada en Configuración.'); keyBuffer=''; renderKeypadDisplay(); return; }
         if(val<0 && !cfg.permitirCantNegativas){ alert('Cantidades negativas deshabilitadas en Configuración.'); keyBuffer=''; renderKeypadDisplay(); return; }
-        line.cant = Math.min(val, p.stock); if(line.cant<=0) cart = cart.filter(l=>l.id!==line.id);
+        // Sin tope por stock: se puede cargar la cantidad real vendida aunque supere lo registrado
+        line.cant = val; if(line.cant<=0) cart = cart.filter(l=>l.id!==line.id);
       }
       if(keyMode==='precio'){
         if(!cfg.puedeEditarPrecio){ alert('La edición de precio unitario está deshabilitada en Configuración.'); keyBuffer=''; renderKeypadDisplay(); return; }
@@ -3648,7 +3652,7 @@ async function confirmarVenta(){
   // reserva el stock de forma segura entre las 3 cajas y pide el próximo ticket de esta caja
   const sync = await ventaConSync(cart);
   if(!sync.ok){
-    toast(`No se pudo vender "${sync.producto}": justo se quedó sin stock (otra caja se lo llevó recién).`, 'err', 6000);
+    toast(`No se pudo registrar "${sync.producto}" en la nube. Revisá la conexión.`, 'err', 6000);
     renderPosGrid();
     return;
   }
@@ -6616,7 +6620,8 @@ async function ventaConSync(cart){
         const doc = await tx.get(ref);
         if(!doc.exists) return true; // producto sin sincronizar todavia: no bloquea la venta
         const stockActual = Number(doc.data().stock);
-        if(stockActual < l.cant) return false;
+        // Se descuenta siempre, aunque quede negativo: nunca se frena una venta real
+        // por falta de stock en el sistema. El negativo avisa que hay que reponer/ajustar.
         tx.update(ref, { stock: stockActual - l.cant });
         return true;
       });
