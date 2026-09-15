@@ -529,7 +529,7 @@
 <aside id="app-sidebar">
   <div class="brand">
     <b>ALMACÉN OS</b>
-    <span>v0.1 · build 11 — La Chispa</span>
+    <span>v0.1 · build 12 — La Chispa</span>
   </div>
   <nav>
     <button data-view="inventario" class="active">Inventario</button>
@@ -1274,7 +1274,11 @@
         <div class="field"><label>N° Ingresos Brutos</label><input id="cfg-nroiibb" type="text"></div>
         <div class="field"><label>Provincia</label><input id="cfg-provincia" type="text"></div>
         <div class="field"><label>Localidad</label><input id="cfg-localidad" type="text"></div>
+        <div class="field"><label>Habilitación de comprobantes</label><input id="cfg-habilitacion" type="text" placeholder='COMPROBANTES CLASE "A"' style="min-width:220px;"></div>
+        <div class="field"><label>Orientación al consumidor</label><input id="cfg-orientacion" type="text" placeholder="ORIENTACION AL CONSUMIDOR BS. AS." style="min-width:240px;"></div>
+        <div class="field"><label>Teléfono defensa del consumidor</label><input id="cfg-teldefensa" type="text" placeholder="0800-222-9042 (LEY 15037)" style="min-width:220px;"></div>
       </div>
+      <div class="subtitle" style="margin-top:8px;">Estos datos salen impresos en el encabezado del Cierre Z y de los comprobantes. Cargalos con los datos de Adrián (el titular nuevo).</div>
     </div>
 
     <div class="card">
@@ -4569,6 +4573,9 @@ function renderConfigView(){
   document.getElementById('cfg-arca-ptovta').value = c.arca.ptoVta;
   document.getElementById('cfg-arca-workerurl').value = c.arca.workerUrl;
   document.getElementById('cfg-domicilio').value = c.empresa.domicilio;
+  document.getElementById('cfg-habilitacion').value = c.empresa.habilitacion||'';
+  document.getElementById('cfg-orientacion').value = c.empresa.orientacionConsumidor||'';
+  document.getElementById('cfg-teldefensa').value = c.empresa.telefonoDefensa||'';
   document.getElementById('cfg-ivadefault').value = String(c.impuestos.ivaDefault);
   document.getElementById('cfg-iibb').value = c.impuestos.iibbAlicuota;
   document.getElementById('cfg-iibb-on').value = c.impuestos.iibbActivo ? 'si':'no';
@@ -4744,6 +4751,9 @@ function guardarConfig(){
   c.arca.ptoVta = parseInt(document.getElementById('cfg-arca-ptovta').value)||1;
   c.arca.workerUrl = document.getElementById('cfg-arca-workerurl').value.trim();
   c.empresa.domicilio = document.getElementById('cfg-domicilio').value.trim();
+  c.empresa.habilitacion = document.getElementById('cfg-habilitacion').value.trim();
+  c.empresa.orientacionConsumidor = document.getElementById('cfg-orientacion').value.trim();
+  c.empresa.telefonoDefensa = document.getElementById('cfg-teldefensa').value.trim();
   c.impuestos.ivaDefault = parseFloat(document.getElementById('cfg-ivadefault').value);
   c.impuestos.iibbAlicuota = parseFloat(document.getElementById('cfg-iibb').value)||0;
   c.impuestos.iibbActivo = document.getElementById('cfg-iibb-on').value==='si';
