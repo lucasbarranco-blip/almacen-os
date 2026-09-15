@@ -196,7 +196,10 @@
     background:var(--ink);
     border-radius:14px;
     overflow:hidden;
-    min-height:640px;
+    /* Altura fija a la pantalla: si crece con el contenido (el riel tiene 100+ familias)
+       hay que scrollear toda la página para llegar al botón de Pago. */
+    height:calc(100vh - 150px);
+    min-height:520px;
     color:#fff;
     display:flex;
     flex-direction:column;
@@ -262,7 +265,7 @@
   /* --- riel de categorías --- */
   .pos-rail{
     width:88px;flex-shrink:0;background:#F6F9EE;border-right:1px solid var(--line);
-    display:flex;flex-direction:column;align-items:center;padding:14px 0;gap:5px;overflow-y:auto;
+    display:flex;flex-direction:column;align-items:center;padding:14px 0;gap:5px;overflow-y:auto;min-height:0;
   }
   .rail-item{
     width:66px;padding:9px 4px;border-radius:12px;display:flex;flex-direction:column;align-items:center;gap:5px;
@@ -275,15 +278,15 @@
 
   /* Panel de funciones del POS: reemplaza la grilla de productos.
      Botones grandes pensados para pantalla táctil (mínimo ~64px de alto). */
-  .pos-funcs{flex:1;overflow-y:auto;padding:18px;background:var(--paper);display:flex;flex-direction:column;gap:14px;}
-  .pos-funcs-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;align-content:start;}
+  .pos-funcs{flex:1;overflow-y:auto;min-height:0;padding:18px;background:var(--paper);display:flex;flex-direction:column;gap:14px;}
+  .pos-funcs-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(178px,1fr));gap:14px;align-content:start;}
   .fbtn{
     background:#fff;border:2px solid var(--line);border-radius:14px;padding:14px 10px;cursor:pointer;
-    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:76px;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;min-height:92px;
     font-family:'Baloo 2',sans-serif;transition:transform .08s, border-color .1s, background .1s;
   }
-  .fbtn b{font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:600;color:var(--green);}
-  .fbtn span{font-size:13.5px;font-weight:600;color:var(--ink);text-align:center;line-height:1.2;}
+  .fbtn b{font-family:'IBM Plex Mono',monospace;font-size:17px;font-weight:600;color:var(--green);}
+  .fbtn span{font-size:15px;font-weight:600;color:var(--ink);text-align:center;line-height:1.2;}
   .fbtn:hover{border-color:var(--green);background:var(--green-soft);}
   .fbtn:active{transform:scale(.97);}
   .fbtn.ok{border-color:var(--green);background:var(--green);}
@@ -322,6 +325,7 @@
   /* --- carrito como ticket colgante --- */
   .pos-cart-panel{
     width:300px;flex-shrink:0;border-left:1px solid var(--line);display:flex;flex-direction:column;background:#EAF3DE;
+    min-height:0;  /* deja que el pie con Total y Pago quede siempre a la vista */
   }
   .pos-cart-hang{flex:1;overflow-y:auto;padding:16px 14px 8px;display:flex;flex-direction:column;gap:10px;}
   .pos-cart-ticket{background:#FFFDF8;border-radius:10px;padding:14px;position:relative;box-shadow:0 1px 3px rgba(47,82,51,.1);}
@@ -553,7 +557,7 @@
 <aside id="app-sidebar">
   <div class="brand">
     <b>ALMACÉN OS</b>
-    <span>v0.1 · build 13 — La Chispa</span>
+    <span>v0.1 · build 14 — La Chispa</span>
   </div>
   <nav>
     <button data-view="inventario" class="active">Inventario</button>
@@ -913,7 +917,6 @@
           <button class="icon-btn" title="Acciones" onclick="openAcciones()">⋮</button>
         </div>
         <div class="pos-body">
-          <div class="pos-rail" id="pos-rail"></div>
           <div class="pos-funcs" id="pos-funcs">
             <div class="pos-funcs-grid">
               <button class="fbtn" onclick="fkeyAgregarMismo()"><b>F2</b><span>Repetir último</span></button>
