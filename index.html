@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Almacén OS — La Chispa</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&family=Nunito+Sans:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=DM+Sans:wght@400;500;700;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.5/JsBarcode.all.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
@@ -26,18 +26,20 @@
     --radius:10px;
 
     /* --- paleta "Azul Almacén" — todo lo que NO es el punto de venta usa estas --- */
-    --az-bg:#F5F6F3;
+    /* Paleta "Tótem": papel cálido, tinta casi negra y un lima que solo aparece
+       en la acción principal. El color no decora, señala dónde tocar. */
+    --az-bg:#F4F4F1;
     --az-surface:#FFFFFF;
-    --az-ink:#1C2430;
-    --az-soft:#5D6B7A;
-    --az-primary:#33587A;
-    --az-primary-ink:#1F3650;
-    --az-primary-soft:#DEE7EE;
-    --az-accent:#D9A62E;
-    --az-accent-soft:#FAF0D8;
-    --az-danger:#C0392B;
-    --az-danger-soft:#F7DCD6;
-    --az-line:#DCE1E6;
+    --az-ink:#1A1A18;
+    --az-soft:#83837C;
+    --az-primary:#1A1A18;
+    --az-primary-ink:#1A1A18;
+    --az-primary-soft:#EFEFEA;
+    --az-accent:#D6F24A;
+    --az-accent-soft:#F2FBD2;
+    --az-danger:#C33A22;
+    --az-danger-soft:#FFE9E5;
+    --az-line:#E4E4DE;
     --az-radius:16px;
   }
   *{box-sizing:border-box;}
@@ -45,7 +47,7 @@
   body{
     background:var(--az-bg);
     color:var(--az-ink);
-    font-family:'Nunito Sans',system-ui,sans-serif;
+    font-family:'DM Sans',system-ui,sans-serif;
     -webkit-font-smoothing:antialiased;
   }
   .mono{font-family:'IBM Plex Mono',monospace;}
@@ -59,22 +61,23 @@
     display:flex;flex-direction:column;overflow-y:auto;
   }
   #app-sidebar .brand{padding:22px 20px 4px;}
-  #app-sidebar .brand b{font-family:'Baloo 2',sans-serif;font-size:19px;font-weight:700;letter-spacing:.2px;}
-  #app-sidebar .brand span{display:block;font-size:11px;color:#B9CBDC;font-family:'IBM Plex Mono',monospace;margin-top:2px;}
+  #app-sidebar .brand b{font-family:'Oswald',sans-serif;font-size:21px;font-weight:600;letter-spacing:1.4px;text-transform:uppercase;}
+  #app-sidebar .brand span{display:block;font-size:10.5px;color:#8C8C84;font-family:'IBM Plex Mono',monospace;margin-top:3px;}
   #app-sidebar nav{
     display:flex;flex-direction:column;gap:2px;padding:14px 12px;flex:1;
     background:transparent;
   }
   #app-sidebar nav button{
-    appearance:none;border:none;background:transparent;color:#C7D6E3;text-align:left;
-    padding:11px 14px;font-family:'Baloo 2',sans-serif;font-size:14px;font-weight:600;
-    cursor:pointer;border-radius:10px;transition:background .15s;
+    appearance:none;border:none;background:transparent;color:#A8A8A0;text-align:left;
+    padding:12px 14px;font-family:'Oswald',sans-serif;font-size:15px;font-weight:500;
+    letter-spacing:.9px;text-transform:uppercase;
+    cursor:pointer;border-radius:10px;transition:background .15s, color .15s;
   }
   #app-sidebar nav button:hover{background:rgba(255,255,255,0.08);}
-  #app-sidebar nav button.active{background:var(--az-accent);color:#2E2408;}
+  #app-sidebar nav button.active{background:var(--az-accent);color:#1A1A18;font-weight:600;}
   #app-sidebar .meta{
-    padding:14px 20px;font-size:11.5px;font-family:'IBM Plex Mono',monospace;color:#8FA4B8;
-    border-top:1px solid rgba(255,255,255,.1);
+    padding:14px 20px;font-size:11.5px;font-family:'IBM Plex Mono',monospace;color:#8C8C84;
+    border-top:1px solid rgba(255,255,255,.12);
   }
 
   main{flex:1;overflow-y:auto;padding:28px 32px 60px;}
@@ -82,8 +85,11 @@
   .view{display:none;}
   .view.active{display:block;}
 
-  h1{font-size:20px;margin:0 0 4px;}
-  .subtitle{color:var(--az-soft);font-size:13px;margin-bottom:20px;}
+  h1{font-family:'Oswald',sans-serif;font-size:27px;font-weight:600;margin:0 0 3px;
+     letter-spacing:1.1px;text-transform:uppercase;}
+  h2{font-family:'Oswald',sans-serif;font-weight:600;letter-spacing:.8px;text-transform:uppercase;font-size:17px;}
+  h3{font-family:'Oswald',sans-serif;font-weight:500;letter-spacing:.6px;}
+  .subtitle{color:var(--az-soft);font-size:13.5px;margin-bottom:22px;}
 
   .card{
     background:var(--az-surface);
@@ -125,7 +131,7 @@
   .badge.info{background:#E3EEE0;color:#2F5233;}
 
   button.btn{
-    appearance:none;border:none;border-radius:8px;padding:9px 16px;font-family:'Baloo 2',sans-serif;
+    appearance:none;border:none;border-radius:8px;padding:9px 16px;font-family:'Oswald',sans-serif;
     font-weight:600;font-size:13px;cursor:pointer;transition:transform .08s, opacity .15s;
   }
   button.btn:active{transform:scale(0.97);}
@@ -272,7 +278,7 @@
     cursor:pointer;color:var(--az-soft);flex-shrink:0;
   }
   .rail-item svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.6;}
-  .rail-item span{font-family:'Nunito Sans',sans-serif;font-size:9.5px;font-weight:700;text-align:center;line-height:1.15;}
+  .rail-item span{font-family:'DM Sans',sans-serif;font-size:9.5px;font-weight:700;text-align:center;line-height:1.15;}
   .rail-item:hover{background:#EAF3DE;}
   .rail-item.active{background:var(--az-primary-soft);color:var(--az-primary-ink);}
 
@@ -283,7 +289,7 @@
   .fbtn{
     background:#fff;border:2px solid var(--line);border-radius:10px;padding:8px 6px;cursor:pointer;
     display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:58px;
-    font-family:'Baloo 2',sans-serif;transition:transform .08s, border-color .1s, background .1s;
+    font-family:'Oswald',sans-serif;transition:transform .08s, border-color .1s, background .1s;
   }
   .fbtn b{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:var(--green);}
   .fbtn span{font-size:12px;font-weight:600;color:var(--ink);text-align:center;line-height:1.15;}
@@ -297,7 +303,7 @@
   .fbtn.warn:hover{border-color:var(--rust);background:var(--rust-soft);}
   .pos-funcs-tip{
     background:#fff;border:1px dashed var(--line);border-radius:10px;padding:8px 10px;
-    font-family:'Nunito Sans',sans-serif;font-size:11.5px;color:var(--ink-soft);line-height:1.4;
+    font-family:'DM Sans',sans-serif;font-size:11.5px;color:var(--ink-soft);line-height:1.4;
   }
 
   .pos-products{flex:1;overflow-y:auto;padding:18px;display:grid;grid-template-columns:repeat(auto-fill,minmax(158px,1fr));gap:12px;align-content:start;background:var(--paper);}
@@ -307,12 +313,12 @@
   }
   .product-card:hover{border-color:var(--az-primary);transform:translateY(-1px);}
   .product-card .pnm{
-    font-size:12.5px;font-weight:700;line-height:1.28;font-family:'Nunito Sans',sans-serif;color:var(--az-ink);
+    font-size:12.5px;font-weight:700;line-height:1.28;font-family:'DM Sans',sans-serif;color:var(--az-ink);
     display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;flex-shrink:0;
   }
   .product-card .pcode{font-size:9.5px;color:var(--az-soft);font-family:'IBM Plex Mono',monospace;margin-top:4px;flex-shrink:0;}
   .product-card .pbottom{margin-top:auto;display:flex;align-items:flex-end;justify-content:space-between;gap:6px;padding-top:6px;}
-  .product-card .pprice{font-family:'Baloo 2',sans-serif;font-size:16px;color:var(--az-primary-ink);font-weight:700;white-space:nowrap;}
+  .product-card .pprice{font-family:'Oswald',sans-serif;font-size:16px;color:var(--az-primary-ink);font-weight:700;white-space:nowrap;}
   .product-card .pstock{
     font-size:9.5px;font-family:'IBM Plex Mono',monospace;font-weight:700;padding:3px 7px;border-radius:20px;white-space:nowrap;flex-shrink:0;
     background:var(--az-primary-soft);color:var(--az-primary-ink);
@@ -334,7 +340,7 @@
     background:linear-gradient(135deg,#FFFDF8 50%,transparent 50%) 0 0/8px 8px repeat-x;
   }
   .pos-cart-ticket-head{
-    font-family:'Baloo 2',sans-serif;font-size:15px;font-weight:700;color:#2F5233;text-align:center;
+    font-family:'Oswald',sans-serif;font-size:15px;font-weight:700;color:#2F5233;text-align:center;
     padding-bottom:8px;margin-bottom:6px;border-bottom:1px dashed #DCE6C8;
   }
   .pos-cart-list{min-height:20px;}
@@ -344,14 +350,14 @@
   }
   .pos-cart-row:last-child{border-bottom:none;}
   .pos-cart-row.selected{background:#F3F7E9;border-radius:6px;}
-  .pos-cart-row .nm{font-size:15px;color:#1F2E1A;font-family:'Nunito Sans',sans-serif;font-weight:700;}
+  .pos-cart-row .nm{font-size:15px;color:#1F2E1A;font-family:'DM Sans',sans-serif;font-weight:700;}
   .pos-cart-row .sub{font-size:12.5px;color:#5C6E52;margin-top:3px;font-family:'IBM Plex Mono',monospace;}
   .pos-cart-row .pr{font-family:'IBM Plex Mono',monospace;font-weight:700;color:#C0392B;font-size:16px;}
   .pos-cart-empty{padding:20px 8px;color:#7FA278;font-size:12.5px;text-align:center;}
 
   .pos-cart-footer{padding:14px 16px 16px;border-top:1px solid #D3E3C4;}
   .pos-cart-footer .row-line{display:flex;justify-content:space-between;font-size:12px;color:#4F6B48;margin-bottom:4px;}
-  .pos-cart-footer .total{display:flex;justify-content:space-between;font-size:32px;font-weight:800;margin:8px 0 14px;color:var(--green-dark);font-family:'Baloo 2',sans-serif;}
+  .pos-cart-footer .total{display:flex;justify-content:space-between;font-size:32px;font-weight:800;margin:8px 0 14px;color:var(--green-dark);font-family:'Oswald',sans-serif;}
   .pos-cart-footer .total .num{font-family:'IBM Plex Mono',monospace;}
   .pos-chip{
     width:100%;background:#fff;border:1px solid var(--line);color:var(--ink);padding:9px 10px;border-radius:8px;font-size:12px;cursor:pointer;
@@ -359,7 +365,7 @@
   }
   .pos-pay-btn{
     width:100%;padding:20px;border:none;border-radius:11px;background:var(--amber);color:#2E1B06;
-    font-size:19px;font-weight:800;cursor:pointer;font-family:'Baloo 2',sans-serif;
+    font-size:19px;font-weight:800;cursor:pointer;font-family:'Oswald',sans-serif;
   }
   .pos-pay-btn:disabled{opacity:0.35;cursor:not-allowed;}
 
@@ -557,7 +563,7 @@
 <aside id="app-sidebar">
   <div class="brand">
     <b>ALMACÉN OS</b>
-    <span>v0.1 · build 16 — La Chispa</span>
+    <span>v0.1 · build 17 — La Chispa</span>
   </div>
   <nav>
     <button data-view="inventario" class="active">Inventario</button>
@@ -1638,7 +1644,7 @@
     </div>
     <div class="field">
       <label>Nota de apertura</label>
-      <textarea id="apertura-nota" rows="3" style="width:100%;font-family:'Baloo 2',sans-serif;border:1px solid var(--line);border-radius:7px;padding:10px;" placeholder="Agregar una nota de apertura..."></textarea>
+      <textarea id="apertura-nota" rows="3" style="width:100%;font-family:'Oswald',sans-serif;border:1px solid var(--line);border-radius:7px;padding:10px;" placeholder="Agregar una nota de apertura..."></textarea>
     </div>
     <div class="actions">
       <button class="btn ghost" onclick="closeAperturaModal()">Descartar</button>
