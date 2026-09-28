@@ -570,7 +570,7 @@
 <aside id="app-sidebar">
   <div class="brand">
     <b>ALMACÉN OS</b>
-    <span>v0.1 · build 22 — La Chispa</span>
+    <span>v0.1 · build 23 — La Chispa</span>
   </div>
   <nav>
     <button data-view="inventario" class="active">Inventario</button>
@@ -2062,6 +2062,10 @@
       <div class="field"><label>IVA %</label>
         <select id="p-iva" onchange="costoBrutoCambio()"><option value="21">21%</option><option value="10.5">10,5%</option><option value="27">27%</option><option value="0">0% / Exento</option></select>
       </div>
+      <div class="field"><label>Otros impuestos %</label>
+        <input id="p-otrosimp" type="number" step="0.01" min="0" placeholder="0" oninput="recalcPrecioDesdeMargen()"
+               title="Impuestos internos u otros tributos que van además del IVA (ej. bebidas alcohólicas, cigarrillos)">
+      </div>
       <div class="field"><label>Costo sin IVA</label><input id="p-costo-neto" type="number" step="0.01" oninput="costoNetoCambio()" placeholder="lo que figura en la factura"></div>
       <div class="field"><label>Costo con IVA</label><input id="p-costo" type="number" step="0.01" oninput="costoBrutoCambio()"></div>
       <div class="field"><label>Margen %</label><input id="p-margen" type="number" step="0.01" oninput="recalcPrecioDesdeMargen()" placeholder="ej: 40"></div>
@@ -2472,7 +2476,11 @@ function recalcPrecioDesdeMargen(){
   const costo = parseFloat(document.getElementById('p-costo').value);
   const margen = parseFloat(document.getElementById('p-margen').value);
   if(isNaN(costo) || isNaN(margen)) return;
-  document.getElementById('p-venta').value = (costo * (1 + margen/100)).toFixed(2);
+  // Los otros impuestos (internos, percepciones) se suman al precio final:
+  // no son parte del margen, se trasladan al precio de venta.
+  const otros = parseFloat(document.getElementById('p-otrosimp').value) || 0;
+  const base = costo * (1 + margen/100);
+  document.getElementById('p-venta').value = (base * (1 + otros/100)).toFixed(2);
 }
 function recalcMargenDesdePrecio(){
   const costo = parseFloat(document.getElementById('p-costo').value);
@@ -2692,12 +2700,13 @@ function openProductModal(id){
     document.getElementById('p-plu').value = p.plu || '';
     document.getElementById('p-plu-formato').value = p.pluFormato || state.config.balanza.formato;
     // el costo sin IVA se deriva del costo cargado y de la alícuota del producto
+    document.getElementById('p-otrosimp').value = p.otrosImp || '';
     const _ivaP = (p.iva !== undefined ? p.iva : state.config.impuestos.ivaDefault) || 0;
     document.getElementById('p-costo-neto').value = p.costo ? (p.costo/(1+_ivaP/100)).toFixed(2) : '';
     togglePluFormato();
   } else {
     document.getElementById('modal-title').textContent = 'Nuevo producto';
-    ['p-id','p-codigo','p-nombre','p-costo','p-venta','p-stock','p-stockmin'].forEach(id=>document.getElementById(id).value='');
+    ['p-id','p-codigo','p-nombre','p-costo','p-costo-neto','p-venta','p-stock','p-stockmin','p-otrosimp'].forEach(id=>document.getElementById(id).value='');
     fillFamiliaSelect(null);
     document.getElementById('p-margen').value = '';
     document.getElementById('p-iva').value = String(state.config.impuestos.ivaDefault);
@@ -2729,6 +2738,7 @@ function saveProduct(){
     stock: parseInt(document.getElementById('p-stock').value) || 0,
     stockMin: parseInt(document.getElementById('p-stockmin').value) || 0,
     iva: parseFloat(document.getElementById('p-iva').value),
+    otrosImp: parseFloat(document.getElementById('p-otrosimp').value) || 0,
     vencimiento: document.getElementById('p-venc').value || null,
     plu: pluVal,
     pluFormato: pluVal ? document.getElementById('p-plu-formato').value : null,
@@ -6577,6 +6587,7 @@ function filaAProducto(data, id){
     id: id, codigo: data.codigo ?? '', nombre: data.nombre ?? '', familia: data.familia ?? 'General',
     proveedor: data.proveedor ?? 'Sin asignar', costo: Number(data.costo)||0, venta: Number(data.venta)||0,
     stock: Number(data.stock)||0, stockMin: Number(data.stock_min)||0, iva: Number(data.iva)||21,
+    otrosImp: Number(data.otros_imp)||0,
     vencimiento: data.vencimiento || null, plu: data.plu || null, pluFormato: data.plu_formato || null,
   };
 }
@@ -6584,7 +6595,7 @@ function productoAFila(p){
   return {
     codigo: p.codigo ?? '', nombre: p.nombre ?? '', familia: p.familia ?? 'General',
     proveedor: p.proveedor ?? 'Sin asignar', costo: p.costo ?? 0, venta: p.venta ?? 0, stock: p.stock ?? 0,
-    stock_min: p.stockMin ?? 0, iva: p.iva ?? 21, vencimiento: p.vencimiento || null,
+    stock_min: p.stockMin ?? 0, iva: p.iva ?? 21, otros_imp: p.otrosImp ?? 0, vencimiento: p.vencimiento || null,
     plu: p.plu || null, plu_formato: p.pluFormato || null,
   };
 }
