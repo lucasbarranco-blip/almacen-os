@@ -570,7 +570,7 @@
 <aside id="app-sidebar">
   <div class="brand">
     <b>ALMACÉN OS</b>
-    <span>v0.1 · build 19 — La Chispa</span>
+    <span>v0.1 · build 20 — La Chispa</span>
   </div>
   <nav>
     <button data-view="inventario" class="active">Inventario</button>
@@ -1020,14 +1020,14 @@
           <div style="width:100%;max-width:420px;">
             <div style="font-size:12px;color:var(--ink-soft);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em;">Tipo de comprobante</div>
             <div style="display:flex;gap:10px;">
-              <div class="pay-method chosen" id="comp-no_fiscal" style="flex:1;justify-content:center;" onclick="setComprobante('no_fiscal')">Presupuesto</div>
-              <div class="pay-method" id="comp-arca" style="flex:1;justify-content:center;" onclick="setComprobante('arca')">Factura ARCA</div>
+              <div class="pay-method chosen" id="comp-no_fiscal" style="flex:1;justify-content:center;" onclick="setComprobante('no_fiscal')"><span class="fk">F1</span>Presupuesto</div>
+              <div class="pay-method" id="comp-arca" style="flex:1;justify-content:center;" onclick="setComprobante('arca')"><span class="fk">F2</span>Factura ARCA</div>
             </div>
           </div>
 
           <div class="pay-bottom">
-            <button class="back" onclick="cancelarConfirm()">Cancelar operación</button>
-            <button class="validate" onclick="confirmarVenta()">Confirmar venta</button>
+            <button class="back" onclick="cancelarConfirm()">Cancelar operación <span style="font-family:'IBM Plex Mono',monospace;opacity:.7;font-size:12px;">F3</span></button>
+            <button class="validate" onclick="confirmarVenta()">Confirmar venta <span style="font-family:'IBM Plex Mono',monospace;opacity:.75;font-size:12px;">F10</span></button>
           </div>
         </div>
       </div>
@@ -3194,6 +3194,18 @@ document.addEventListener('keydown', function(ev){
     if(btn && !btn.disabled) validarPago();
     else toast('Elegí primero un medio de pago (F1 a F4).', 'err', 2500);
   }
+}, true);
+
+// Atajos de la pantalla de CONFIRMAR VENTA (pedido del cliente):
+// F1 presupuesto · F2 factura ARCA · F3 cancelar · F10 confirmar.
+document.addEventListener('keydown', function(ev){
+  const conf = document.getElementById('pos-confirm');
+  if(!conf || !conf.classList.contains('active')) return;
+  if(document.querySelector('.overlay.open')) return;
+  if(ev.key==='F1'){ ev.preventDefault(); setComprobante('no_fiscal'); }
+  else if(ev.key==='F2'){ ev.preventDefault(); setComprobante('arca'); }
+  else if(ev.key==='F3'){ ev.preventDefault(); cancelarConfirm(); }
+  else if(ev.key==='F10'){ ev.preventDefault(); confirmarVenta(); }
 }, true);
 
 function posSearchInput(){
