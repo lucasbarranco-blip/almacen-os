@@ -570,7 +570,7 @@
 <aside id="app-sidebar">
   <div class="brand">
     <b>ALMACÉN OS</b>
-    <span>v0.1 · build 23 — La Chispa</span>
+    <span>v0.1 · build 24 — La Chispa</span>
   </div>
   <nav>
     <button data-view="inventario" class="active">Inventario</button>
@@ -2060,10 +2060,10 @@
       <div class="field"><label>Familia</label><select id="p-familia" onchange="onFamiliaChange()"></select></div>
       <div class="field"><label>Proveedor</label><select id="p-proveedor" onchange="onProveedorSelectChange()"></select></div>
       <div class="field"><label>IVA %</label>
-        <select id="p-iva" onchange="costoBrutoCambio()"><option value="21">21%</option><option value="10.5">10,5%</option><option value="27">27%</option><option value="0">0% / Exento</option></select>
+        <select id="p-iva" onchange="impuestosCambio()"><option value="21">21%</option><option value="10.5">10,5%</option><option value="27">27%</option><option value="0">0% / Exento</option></select>
       </div>
       <div class="field"><label>Otros impuestos %</label>
-        <input id="p-otrosimp" type="number" step="0.01" min="0" placeholder="0" oninput="recalcPrecioDesdeMargen()"
+        <input id="p-otrosimp" type="number" step="0.01" min="0" placeholder="0" oninput="impuestosCambio()"
                title="Impuestos internos u otros tributos que van además del IVA (ej. bebidas alcohólicas, cigarrillos)">
       </div>
       <div class="field"><label>Costo sin IVA</label><input id="p-costo-neto" type="number" step="0.01" oninput="costoNetoCambio()" placeholder="lo que figura en la factura"></div>
@@ -2456,31 +2456,56 @@ function ivaProducto(){
   const v = parseFloat(document.getElementById('p-iva').value);
   return isNaN(v) ? 21 : v;
 }
+function otrosImpProducto(){
+  const v = parseFloat(document.getElementById('p-otrosimp').value);
+  return isNaN(v) ? 0 : v;
+}
+// Los impuestos se encadenan sobre el costo, igual que viene en la factura del proveedor:
+//   costo sin IVA  →  + otros impuestos  →  + IVA  =  costo final
+// y recién sobre ese costo final se aplica el margen para sacar el precio de venta.
+function factorImpuestos(){
+  return (1 + otrosImpProducto()/100) * (1 + ivaProducto()/100);
+}
 function costoNetoCambio(){
   const neto = parseFloat(document.getElementById('p-costo-neto').value);
   if(isNaN(neto)) return;
-  const bruto = neto * (1 + ivaProducto()/100);
-  document.getElementById('p-costo').value = bruto.toFixed(2);
+  document.getElementById('p-costo').value = (neto * factorImpuestos()).toFixed(2);
   recalcPrecioDesdeMargen();
 }
 function costoBrutoCambio(){
   const bruto = parseFloat(document.getElementById('p-costo').value);
   if(!isNaN(bruto)){
-    const neto = bruto / (1 + ivaProducto()/100);
-    document.getElementById('p-costo-neto').value = neto.toFixed(2);
+    document.getElementById('p-costo-neto').value = (bruto / factorImpuestos()).toFixed(2);
   }
   recalcPrecioDesdeMargen();
+}
+// Al cambiar IVA u otros impuestos se rehace el costo final desde el neto,
+// que es el dato que el usuario carga de la factura y no debería moverse.
+function impuestosCambio(){
+  const neto = parseFloat(document.getElementById('p-costo-neto').value);
+  if(!isNaN(neto) && neto>0){
+    document.getElementById('p-costo').value = (neto * factorImpuestos()).toFixed(2);
+    recalcPrecioDesdeMargen();
+  } else {
+    costoBrutoCambio();
+  }
 }
 
 function recalcPrecioDesdeMargen(){
   const costo = parseFloat(document.getElementById('p-costo').value);
   const margen = parseFloat(document.getElementById('p-margen').value);
-  if(isNaN(costo) || isNaN(margen)) return;
-  // Los otros impuestos (internos, percepciones) se suman al precio final:
-  // no son parte del margen, se trasladan al precio de venta.
-  const otros = parseFloat(document.getElementById('p-otrosimp').value) || 0;
-  const base = costo * (1 + margen/100);
-  document.getElementById('p-venta').value = (base * (1 + otros/100)).toFixed(2);
+  if(isNaN(costo)) return;
+  if(isNaN(margen)){
+    // Sin margen cargado no se puede calcular el precio, pero el margen actual sí
+    // se puede deducir del precio que ya tiene el producto: así al tocar los impuestos
+    // el formulario reacciona igual y no queda la sensación de que "no calcula nada".
+    const venta = parseFloat(document.getElementById('p-venta').value);
+    if(!isNaN(venta) && costo>0){
+      document.getElementById('p-margen').value = (((venta/costo)-1)*100).toFixed(2);
+    }
+    return;
+  }
+  document.getElementById('p-venta').value = (costo * (1 + margen/100)).toFixed(2);
 }
 function recalcMargenDesdePrecio(){
   const costo = parseFloat(document.getElementById('p-costo').value);
