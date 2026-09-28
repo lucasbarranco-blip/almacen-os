@@ -570,7 +570,7 @@
 <aside id="app-sidebar">
   <div class="brand">
     <b>ALMACÉN OS</b>
-    <span>v0.1 · build 21 — La Chispa</span>
+    <span>v0.1 · build 22 — La Chispa</span>
   </div>
   <nav>
     <button data-view="inventario" class="active">Inventario</button>
@@ -2060,9 +2060,10 @@
       <div class="field"><label>Familia</label><select id="p-familia" onchange="onFamiliaChange()"></select></div>
       <div class="field"><label>Proveedor</label><select id="p-proveedor" onchange="onProveedorSelectChange()"></select></div>
       <div class="field"><label>IVA %</label>
-        <select id="p-iva"><option value="21">21%</option><option value="10.5">10,5%</option><option value="27">27%</option><option value="0">0% / Exento</option></select>
+        <select id="p-iva" onchange="costoBrutoCambio()"><option value="21">21%</option><option value="10.5">10,5%</option><option value="27">27%</option><option value="0">0% / Exento</option></select>
       </div>
-      <div class="field"><label>Costo</label><input id="p-costo" type="number" step="0.01" oninput="recalcPrecioDesdeMargen()"></div>
+      <div class="field"><label>Costo sin IVA</label><input id="p-costo-neto" type="number" step="0.01" oninput="costoNetoCambio()" placeholder="lo que figura en la factura"></div>
+      <div class="field"><label>Costo con IVA</label><input id="p-costo" type="number" step="0.01" oninput="costoBrutoCambio()"></div>
       <div class="field"><label>Margen %</label><input id="p-margen" type="number" step="0.01" oninput="recalcPrecioDesdeMargen()" placeholder="ej: 40"></div>
       <div class="field"><label>Precio venta</label><input id="p-venta" type="number" step="0.01" oninput="recalcMargenDesdePrecio()"></div>
       <div class="field"><label>Stock actual</label><input id="p-stock" type="number"></div>
@@ -2287,6 +2288,7 @@ let cart = [];
 let clienteActual = null; // se setea desde config en init
 let clienteActualId = null; // id de cliente real (cta cte) o null para consumidor final
 let selectedLineId = null;
+let _ultimoCambioPantalla = 0;  // momento del último cambio de pantalla del POS (anti tecla sostenida)
 let lastAddedProductId = null;
 let keyMode = 'cant';
 let keyBuffer = '';
@@ -2443,6 +2445,29 @@ function generarCodigoInterno(){
   persist();
   document.getElementById('p-codigo').value = codigo;
 }
+// Costo sin IVA <-> costo con IVA. En la factura del proveedor el costo viene neto,
+// pero el margen y el precio de venta se calculan sobre el costo final: tener los dos
+// campos evita andar sacando la cuenta a mano cada vez que se carga un producto.
+function ivaProducto(){
+  const v = parseFloat(document.getElementById('p-iva').value);
+  return isNaN(v) ? 21 : v;
+}
+function costoNetoCambio(){
+  const neto = parseFloat(document.getElementById('p-costo-neto').value);
+  if(isNaN(neto)) return;
+  const bruto = neto * (1 + ivaProducto()/100);
+  document.getElementById('p-costo').value = bruto.toFixed(2);
+  recalcPrecioDesdeMargen();
+}
+function costoBrutoCambio(){
+  const bruto = parseFloat(document.getElementById('p-costo').value);
+  if(!isNaN(bruto)){
+    const neto = bruto / (1 + ivaProducto()/100);
+    document.getElementById('p-costo-neto').value = neto.toFixed(2);
+  }
+  recalcPrecioDesdeMargen();
+}
+
 function recalcPrecioDesdeMargen(){
   const costo = parseFloat(document.getElementById('p-costo').value);
   const margen = parseFloat(document.getElementById('p-margen').value);
@@ -2666,6 +2691,9 @@ function openProductModal(id){
     document.getElementById('p-venc').value = p.vencimiento || '';
     document.getElementById('p-plu').value = p.plu || '';
     document.getElementById('p-plu-formato').value = p.pluFormato || state.config.balanza.formato;
+    // el costo sin IVA se deriva del costo cargado y de la alícuota del producto
+    const _ivaP = (p.iva !== undefined ? p.iva : state.config.impuestos.ivaDefault) || 0;
+    document.getElementById('p-costo-neto').value = p.costo ? (p.costo/(1+_ivaP/100)).toFixed(2) : '';
     togglePluFormato();
   } else {
     document.getElementById('modal-title').textContent = 'Nuevo producto';
@@ -3039,10 +3067,12 @@ document.addEventListener('keydown', function(ev){
   // dejamos pasar F1-F12 aunque el foco esté en el buscador (es la posición normal del cursor
   // durante la venta); si el foco está en OTRO input de texto libre, tampoco molesta: las teclas
   // F no escriben caracteres, así que interceptarlas no rompe lo que se esté tipeando.
+  if(ev.repeat) return;   // tecla sostenida: no encadenar acciones
   ev.preventDefault();
   // se corta acá para que la misma tecla no encadene otra acción en la pantalla
   // a la que se acaba de entrar (p. ej. F10 cobrar y después validar de una)
   ev.stopImmediatePropagation();
+  if(id==='cobrar' || id==='cerrarcaja') _ultimoCambioPantalla = Date.now();
   if(id==='buscar') document.getElementById('pos-search').focus();
   if(id==='repetir') fkeyAgregarMismo();
   if(id==='anular') fkeyAnularUltimo();
@@ -3187,6 +3217,12 @@ document.addEventListener('keydown', function(ev){
 document.addEventListener('keydown', function(ev){
   if(document.querySelector('.overlay.open')) return;
   if(!/^F\d{1,2}$/.test(ev.key)) return;
+  // Si se mantiene la tecla apretada, el teclado la repite: sin esto, un F10 sostenido
+  // valida el pago y acto seguido confirma la venta, saltando la elección de comprobante.
+  if(ev.repeat) return;
+  // Y aunque no repita, tras cambiar de pantalla se ignoran las teclas por un instante,
+  // para que un golpe rápido no dispare la acción de la pantalla siguiente.
+  if(Date.now() - _ultimoCambioPantalla < 450) return;
 
   const pago = document.getElementById('pos-pago');
   const conf = document.getElementById('pos-confirm');
@@ -3203,7 +3239,7 @@ document.addEventListener('keydown', function(ev){
     if(n>=1 && n<=PAY_METHODS.length){ choosePayMethod(PAY_METHODS[n-1].id); return; }
     if(ev.key==='F10'){
       const btn = document.getElementById('pay-validate-btn');
-      if(btn && !btn.disabled) validarPago();
+      if(btn && !btn.disabled){ _ultimoCambioPantalla = Date.now(); validarPago(); }
       else toast('Elegí primero un medio de pago (F1 a F4).', 'err', 2500);
     }
     return;
