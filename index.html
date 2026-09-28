@@ -570,7 +570,7 @@
 <aside id="app-sidebar">
   <div class="brand">
     <b>ALMACÉN OS</b>
-    <span>v0.1 · build 24 — La Chispa</span>
+    <span>v0.1 · build 25 — La Chispa</span>
   </div>
   <nav>
     <button data-view="inventario" class="active">Inventario</button>
@@ -1103,6 +1103,20 @@
     <h1>Listado de Productos</h1>
     <div class="subtitle">Vista exportable del catálogo completo.</div>
     <div class="card">
+      <!-- Filtro por fecha de cambio de precio: el flujo real es "qué carteles tengo que
+           reimprimir", y eso depende de qué cambió de precio y cuándo. -->
+      <div class="row" style="align-items:flex-end;gap:10px;margin-bottom:14px;flex-wrap:wrap;
+                  background:var(--az-primary-soft);padding:12px 14px;border-radius:12px;">
+        <div class="field" style="margin:0;"><label>Precio cambió desde</label>
+          <input type="date" id="listado-desde" onchange="renderListado()"></div>
+        <div class="field" style="margin:0;"><label>hasta</label>
+          <input type="date" id="listado-hasta" onchange="renderListado()"></div>
+        <button class="btn primary small" onclick="listadoFiltroHoy()">Solo los de hoy</button>
+        <button class="btn ghost small" onclick="listadoFiltroLimpiar()">Ver todos</button>
+        <span style="flex:1"></span>
+        <button class="btn ghost small" onclick="listadoSeleccionarTodos(true)">Marcar todos</button>
+        <button class="btn ghost small" onclick="listadoSeleccionarTodos(false)">Desmarcar</button>
+      </div>
       <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:10px;">
         <span style="font-size:13px;color:var(--ink-soft);" id="listado-count"></span>
         <div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;">
@@ -1117,7 +1131,7 @@
       </div>
       <div style="overflow-x:auto;">
         <table>
-          <thead><tr><th><input type="checkbox" onclick="document.querySelectorAll('.etq-check').forEach(c=>c.checked=this.checked)"></th><th>Etiq.</th><th>Código</th><th>Nombre</th><th>Familia</th><th>Proveedor</th><th style="text-align:right">Costo</th><th style="text-align:right">Venta</th><th style="text-align:right">Stock</th></tr></thead>
+          <thead><tr><th><input type="checkbox" onclick="document.querySelectorAll('.etq-check').forEach(c=>c.checked=this.checked)"></th><th>Etiq.</th><th>Código</th><th>Nombre</th><th>Familia</th><th>Proveedor</th><th>Precio cambió</th><th style="text-align:right">Costo</th><th style="text-align:right">Venta</th><th style="text-align:right">Stock</th></tr></thead>
           <tbody id="listado-body"></tbody>
         </table>
       </div>
@@ -2278,6 +2292,15 @@ if(state.productos.length === 0 && !state.config.sync.liveEnabled){
 state.config.ia = Object.assign({}, DEFAULT_CONFIG.ia, state.config.ia || {});
 if(!Array.isArray(state.config.pos.accesosRapidos)) state.config.pos.accesosRapidos = [];
 state.config.balanza = Object.assign({}, DEFAULT_CONFIG.balanza, state.config.balanza || {});
+// Los productos que ya existían no tienen fecha de cambio de precio: se les pone hoy,
+// así el filtro de carteles arranca desde una base pareja.
+(function sellarFechaPrecioInicial(){
+  const hoy = hoyISO();
+  let cambio = false;
+  (state.productos||[]).forEach(p=>{ if(!p.fechaPrecio){ p.fechaPrecio = hoy; cambio = true; } });
+  if(cambio) marcarCatalogoSucio();
+})();
+
 state.local = state.local || { largo:0, ancho:0 };
 // Góndolas cargadas con el formato anterior (una sola familia) siguen funcionando:
 // se les toma esa familia como nombre del rubro.
@@ -2513,6 +2536,18 @@ function recalcMargenDesdePrecio(){
   if(!costo || isNaN(venta)) return;
   document.getElementById('p-margen').value = (((venta/costo)-1)*100).toFixed(2);
 }
+// Fecha de hoy en formato AAAA-MM-DD (local, no UTC: si no, después de las 21 hs
+// en Argentina el sello saldría con la fecha del día siguiente).
+function hoyISO(){
+  const d = new Date();
+  return new Date(d.getTime() - d.getTimezoneOffset()*60000).toISOString().slice(0,10);
+}
+function fmtFechaCorta(iso){
+  if(!iso) return '—';
+  const [a,m,d] = iso.split('-');
+  return `${d}/${m}/${a.slice(2)}`;
+}
+
 function familiasUnicas(){
   return Array.from(new Set(state.productos.map(p=>p.familia).filter(Boolean))).sort((a,b)=>a.localeCompare(b));
 }
@@ -2769,6 +2804,7 @@ function saveProduct(){
     pluFormato: pluVal ? document.getElementById('p-plu-formato').value : null,
   };
   if(!data.nombre || !data.codigo){ alert('Completá al menos código y nombre.'); return; }
+  if(!id) data.fechaPrecio = hoyISO();   // alta nueva: el precio es de hoy
   if(state.config.pos.noRepetirCodigos){
     const dup = state.productos.find(x=>x.codigo===data.codigo && x.id!==parseInt(id||0));
     if(dup){ alert(`El código ${data.codigo} ya existe en "${dup.nombre}" (control activado en Configuración).`); return; }
@@ -2777,6 +2813,9 @@ function saveProduct(){
   let productoFinal;
   if(id){
     const p = state.productos.find(x=>x.id===parseInt(id));
+    // Si cambió el precio de venta se sella la fecha: es lo que permite después
+    // filtrar qué carteles hay que reimprimir.
+    if(Number(p.venta) !== Number(data.venta)) data.fechaPrecio = hoyISO();
     Object.assign(p, data);
     productoFinal = p;
   } else {
@@ -4322,7 +4361,17 @@ const LISTADO_TOPE = 200;
 const SELECT_TOPE = 300; // los <select> de producto con 12.700 opciones traban el navegador al abrirse // cada fila trae 2 campos de formulario: dibujar 12.700 crea ~25.000 elementos y cuelga el navegador
 function renderListado(){
   const body = document.getElementById('listado-body');
-  const visibles = state.productos.slice(0, LISTADO_TOPE);
+  const desde = (document.getElementById('listado-desde')||{}).value || '';
+  const hasta = (document.getElementById('listado-hasta')||{}).value || '';
+  // Filtro por fecha de cambio de precio: sirve para imprimir solo los carteles
+  // de lo que efectivamente cambió de precio en ese período.
+  let lista = state.productos;
+  if(desde) lista = lista.filter(p=>(p.fechaPrecio||'') >= desde);
+  if(hasta) lista = lista.filter(p=>(p.fechaPrecio||'') <= hasta);
+  lista = lista.slice().sort((a,b)=>(b.fechaPrecio||'').localeCompare(a.fechaPrecio||''));
+
+  const visibles = lista.slice(0, LISTADO_TOPE);
+  const hoy = hoyISO();
   body.innerHTML = visibles.map(p=>`
     <tr>
       <td><input type="checkbox" class="etq-check" value="${p.id}"></td>
@@ -4331,15 +4380,31 @@ function renderListado(){
       <td>${p.nombre}</td>
       <td>${p.familia}</td>
       <td>${p.proveedor}</td>
+      <td class="mono" style="${p.fechaPrecio===hoy?'color:var(--az-danger);font-weight:700;':''}">${fmtFechaCorta(p.fechaPrecio)}</td>
       <td class="num">${fmt(p.costo)}</td>
       <td class="num">${fmt(p.venta)}</td>
       <td class="num">${p.stock}</td>
     </tr>
-  `).join('');
-  const total = state.productos.length;
-  document.getElementById('listado-count').textContent = total > LISTADO_TOPE
-    ? `Mostrando ${LISTADO_TOPE} de ${total.toLocaleString('es-AR')} productos (para etiquetas, seleccioná de a tandas)`
-    : `${total} productos`;
+  `).join('') || `<tr><td colspan="10" style="color:var(--az-soft);padding:16px;">Ningún producto cambió de precio en ese período.</td></tr>`;
+
+  const t = lista.length;
+  document.getElementById('listado-count').textContent = t > LISTADO_TOPE
+    ? `Mostrando ${LISTADO_TOPE} de ${t.toLocaleString('es-AR')} productos con cambio de precio en el período`
+    : `${t.toLocaleString('es-AR')} producto(s)`;
+}
+// Atajos del filtro de carteles
+function listadoFiltroHoy(){
+  document.getElementById('listado-desde').value = hoyISO();
+  document.getElementById('listado-hasta').value = hoyISO();
+  renderListado();
+}
+function listadoFiltroLimpiar(){
+  document.getElementById('listado-desde').value = '';
+  document.getElementById('listado-hasta').value = '';
+  renderListado();
+}
+function listadoSeleccionarTodos(marcar){
+  document.querySelectorAll('.etq-check').forEach(c=>c.checked = marcar);
 }
 
 function exportCSV(){
@@ -5918,9 +5983,11 @@ function aplicarActualizacionMasiva(){
   ids.forEach(id=>{
     const p = state.productos.find(x=>x.id===id);
     if(!p) return;
-    if(op==='precio_pct') p.venta = redondearPrecio(p.venta * (1+pct/100));
+    // Toda operación que toque el precio de venta sella la fecha: es lo que después
+    // permite filtrar qué carteles hay que reimprimir.
+    if(op==='precio_pct'){ p.venta = redondearPrecio(p.venta * (1+pct/100)); p.fechaPrecio = hoyISO(); }
     if(op==='costo_pct') p.costo = redondearCompra(p.costo * (1+pct/100));
-    if(op==='margen_fijo' && p.costo>0) p.venta = redondearPrecio(p.costo * (1+pct/100));
+    if(op==='margen_fijo' && p.costo>0){ p.venta = redondearPrecio(p.costo * (1+pct/100)); p.fechaPrecio = hoyISO(); }
     if(op==='familia') p.familia = familia;
     if(op==='proveedor') p.proveedor = proveedor;
     if(op==='iva') p.iva = iva;
@@ -6612,7 +6679,7 @@ function filaAProducto(data, id){
     id: id, codigo: data.codigo ?? '', nombre: data.nombre ?? '', familia: data.familia ?? 'General',
     proveedor: data.proveedor ?? 'Sin asignar', costo: Number(data.costo)||0, venta: Number(data.venta)||0,
     stock: Number(data.stock)||0, stockMin: Number(data.stock_min)||0, iva: Number(data.iva)||21,
-    otrosImp: Number(data.otros_imp)||0,
+    otrosImp: Number(data.otros_imp)||0, fechaPrecio: data.fecha_precio || null,
     vencimiento: data.vencimiento || null, plu: data.plu || null, pluFormato: data.plu_formato || null,
   };
 }
@@ -6620,7 +6687,8 @@ function productoAFila(p){
   return {
     codigo: p.codigo ?? '', nombre: p.nombre ?? '', familia: p.familia ?? 'General',
     proveedor: p.proveedor ?? 'Sin asignar', costo: p.costo ?? 0, venta: p.venta ?? 0, stock: p.stock ?? 0,
-    stock_min: p.stockMin ?? 0, iva: p.iva ?? 21, otros_imp: p.otrosImp ?? 0, vencimiento: p.vencimiento || null,
+    stock_min: p.stockMin ?? 0, iva: p.iva ?? 21, otros_imp: p.otrosImp ?? 0,
+    fecha_precio: p.fechaPrecio || null, vencimiento: p.vencimiento || null,
     plu: p.plu || null, plu_formato: p.pluFormato || null,
   };
 }
