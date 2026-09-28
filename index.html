@@ -345,14 +345,16 @@
   }
   .pos-cart-list{min-height:20px;}
   .pos-cart-row{
-    display:flex;justify-content:space-between;align-items:center;padding:12px 4px;cursor:pointer;
+    display:flex;justify-content:space-between;align-items:center;gap:10px;padding:13px 4px;cursor:pointer;
     border-bottom:1px dashed #DCE6C8;
   }
   .pos-cart-row:last-child{border-bottom:none;}
   .pos-cart-row.selected{background:#F3F7E9;border-radius:6px;}
-  .pos-cart-row .nm{font-size:15px;color:#1F2E1A;font-family:'DM Sans',sans-serif;font-weight:700;}
-  .pos-cart-row .sub{font-size:12.5px;color:#5C6E52;margin-top:3px;font-family:'IBM Plex Mono',monospace;}
-  .pos-cart-row .pr{font-family:'IBM Plex Mono',monospace;font-weight:700;color:#C0392B;font-size:16px;}
+  .pos-cart-row > div:first-child{min-width:0;flex:1;}
+  .pos-cart-row .pr{flex-shrink:0;}
+  .pos-cart-row .nm{font-size:19px;line-height:1.25;color:#1F2E1A;font-family:'DM Sans',sans-serif;font-weight:700;}
+  .pos-cart-row .sub{font-size:14px;color:#5C6E52;margin-top:4px;font-family:'IBM Plex Mono',monospace;}
+  .pos-cart-row .pr{font-family:'IBM Plex Mono',monospace;font-weight:700;color:#C0392B;font-size:19px;}
   .pos-cart-empty{padding:20px 8px;color:#7FA278;font-size:12.5px;text-align:center;}
 
   .pos-cart-footer{padding:14px 16px 16px;border-top:1px solid #D3E3C4;}
@@ -563,7 +565,7 @@
 <aside id="app-sidebar">
   <div class="brand">
     <b>ALMACÉN OS</b>
-    <span>v0.1 · build 17 — La Chispa</span>
+    <span>v0.1 · build 18 — La Chispa</span>
   </div>
   <nav>
     <button data-view="inventario" class="active">Inventario</button>
