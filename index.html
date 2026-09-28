@@ -404,6 +404,11 @@
     padding:16px 14px;border-radius:9px;margin-bottom:8px;cursor:pointer;font-size:14px;font-weight:600;
     background:#fff;border:1px solid var(--line);color:var(--ink);display:flex;align-items:center;gap:10px;
   }
+  .pay-method .fk{
+    font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:600;
+    background:var(--green-soft);color:var(--green-dark);border-radius:5px;padding:3px 7px;flex-shrink:0;
+  }
+  .pay-method.chosen .fk{background:rgba(0,0,0,.14);color:#2E1B06;}
   .pay-method:hover{border-color:var(--green);}
   .pay-method.chosen{background:var(--amber);color:#2E1B06;border-color:var(--amber);}
   .pay-toggle-row{display:flex;gap:8px;padding:14px;border-top:1px solid var(--line);}
@@ -565,7 +570,7 @@
 <aside id="app-sidebar">
   <div class="brand">
     <b>ALMACÉN OS</b>
-    <span>v0.1 · build 18 — La Chispa</span>
+    <span>v0.1 · build 19 — La Chispa</span>
   </div>
   <nav>
     <button data-view="inventario" class="active">Inventario</button>
@@ -994,7 +999,7 @@
             </div>
             <div class="pay-bottom">
               <button class="back" onclick="volverAGrilla()">Regresar</button>
-              <button class="validate" id="pay-validate-btn" onclick="validarPago()" disabled>Validar</button>
+              <button class="validate" id="pay-validate-btn" onclick="validarPago()" disabled>Validar <span style="font-family:'IBM Plex Mono',monospace;opacity:.75;font-size:12px;">F10</span></button>
             </div>
           </div>
         </div>
@@ -3169,6 +3174,28 @@ document.addEventListener('keydown', function(ev){
   }
 }, true);
 
+// Atajos de la pantalla de PAGO: F1..F4 eligen medio de pago (en el orden configurado)
+// y F10 valida. Pedido del cliente para cobrar sin soltar el teclado.
+document.addEventListener('keydown', function(ev){
+  const pago = document.getElementById('pos-pago');
+  if(!pago || !pago.classList.contains('active')) return;
+  if(document.querySelector('.overlay.open')) return;
+  const m = ev.key.match(/^F(\d{1,2})$/);
+  if(!m) return;
+  const n = parseInt(m[1],10);
+  if(n>=1 && n<=PAY_METHODS.length){
+    ev.preventDefault();
+    choosePayMethod(PAY_METHODS[n-1].id);
+    return;
+  }
+  if(ev.key==='F10'){
+    ev.preventDefault();
+    const btn = document.getElementById('pay-validate-btn');
+    if(btn && !btn.disabled) validarPago();
+    else toast('Elegí primero un medio de pago (F1 a F4).', 'err', 2500);
+  }
+}, true);
+
 function posSearchInput(){
   const inp = document.getElementById('pos-search');
   const v = inp.value.trim();
@@ -3543,8 +3570,11 @@ function goToPago(){
     return;
   }
   payMethod = null; payBuffer='';
-  let metodos = PAY_METHODS.map(m=>`
-    <div class="pay-method" id="pm-${m.id}" onclick="choosePayMethod('${m.id}')"><span>${m.icon}</span><span>${m.label}</span></div>
+  // F1..F4 en el orden en que están configurados los métodos (pedido del cliente)
+  let metodos = PAY_METHODS.map((m,i)=>`
+    <div class="pay-method" id="pm-${m.id}" onclick="choosePayMethod('${m.id}')">
+      <span class="fk">F${i+1}</span><span>${m.icon}</span><span>${m.label}</span>
+    </div>
   `).join('');
   if(clienteActualId){
     metodos += `<div class="pay-method" id="pm-ctacte" onclick="choosePayMethod('ctacte')"><span>📒</span><span>Cuenta corriente</span></div>`;
