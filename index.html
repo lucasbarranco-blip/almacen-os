@@ -10,6 +10,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <style>
   :root{
     --paper:#FBF6E9;
@@ -570,7 +571,7 @@
 <aside id="app-sidebar">
   <div class="brand">
     <b>ALMACÉN OS</b>
-    <span>v0.1 · build 25 — La Chispa</span>
+    <span>v0.1 · build 26 — La Chispa</span>
   </div>
   <nav>
     <button data-view="inventario" class="active">Inventario</button>
@@ -1142,6 +1143,20 @@
   <section class="view" id="view-contable">
     <h1>Estado Contable</h1>
     <div class="subtitle">Resumen simple, base caja. No reemplaza a tu contador — es tu termómetro diario.</div>
+
+    <div class="card">
+      <h2>Para el contador y respaldo</h2>
+      <div class="subtitle" style="margin-bottom:12px;">Libro IVA Ventas del período y copia de seguridad de todos los datos.</div>
+      <div class="row" style="align-items:flex-end;gap:10px;flex-wrap:wrap;">
+        <div class="field" style="margin:0;"><label>Desde</label><input type="date" id="iva-desde"></div>
+        <div class="field" style="margin:0;"><label>Hasta</label><input type="date" id="iva-hasta"></div>
+        <button class="btn primary small" onclick="exportarLibroIVA()">📄 Libro IVA Ventas (CSV)</button>
+        <span style="flex:1"></span>
+        <button class="btn ghost small" onclick="descargarBackup()">💾 Backup completo</button>
+        <button class="btn ghost small" onclick="verAuditoria()">🔍 Registro de actividad</button>
+      </div>
+      <div id="backup-estado" class="subtitle" style="margin:10px 0 0;"></div>
+    </div>
 
     <div class="row" style="margin-bottom:20px;">
       <div class="stat">
@@ -2152,6 +2167,8 @@ let state = {
   // Arranca con lo que haya guardado; si no hay nada queda vacío y el catálogo baja
   // de la nube (ver más abajo, donde se decide si corresponde usar los de demostración).
   productos: load('ao_productos', null) || [],
+  auditoria: load('ao_auditoria', []),
+  usuarioActivo: null,   // se setea al identificarse con PIN
   ventas: load('ao_ventas', []),
   caja: load('ao_caja', []),
   nextVentaId: load('ao_next_venta', 1),
@@ -2186,6 +2203,12 @@ let state = {
 
 const DEFAULT_CONFIG = {
   // Defaults tomados de la configuración real de La Chispa en POSBerry
+  // Usuarios del local. El PIN se pide al entrar y define qué puede tocar cada uno.
+  usuarios: [
+    {id:1, nombre:'Adrián', rol:'admin', pin:'1111'},
+    {id:2, nombre:'Encargado', rol:'encargado', pin:'2222'},
+    {id:3, nombre:'Cajero', rol:'cajero', pin:'3333'},
+  ],
   empresa: {
     razonSocial:'', fantasia:'LA CHISPA', cuit:'', condicionIVA:'Monotributista', domicilio:'',
     inicioActividades:'', ingresosBrutos:'', provincia:'Provincia de Buenos Aires', localidad:'',
@@ -2316,6 +2339,7 @@ let clienteActual = null; // se setea desde config en init
 let clienteActualId = null; // id de cliente real (cta cte) o null para consumidor final
 let selectedLineId = null;
 let _ultimoCambioPantalla = 0;  // momento del último cambio de pantalla del POS (anti tecla sostenida)
+const VENTAS_LOCALES_MAX = 1500;  // ventas que se conservan en el equipo (el resto queda en la nube)
 let lastAddedProductId = null;
 let keyMode = 'cant';
 let keyBuffer = '';
@@ -2337,7 +2361,11 @@ function persist(){
     save('ao_productos', state.productos);
     _catalogoSucio = false;
   }
-  save('ao_ventas', state.ventas);
+  // Las ventas viejas no se guardan en el navegador: se acumulan sin fin y terminan
+  // reventando la cuota (el mismo QuotaExceededError que tuvimos con el catálogo),
+  // y esta vez con ventas reales adentro. Quedan las últimas en el equipo; el histórico
+  // completo vive en la nube, que es la fuente de verdad.
+  save('ao_ventas', state.ventas.slice(-VENTAS_LOCALES_MAX));
   save('ao_caja', state.caja);
   save('ao_next_venta', state.nextVentaId);
   save('ao_next_prod', state.nextProdId);
@@ -2538,6 +2566,170 @@ function recalcMargenDesdePrecio(){
 }
 // Fecha de hoy en formato AAAA-MM-DD (local, no UTC: si no, después de las 21 hs
 // en Argentina el sello saldría con la fecha del día siguiente).
+/* ===================== USUARIOS, PERMISOS Y AUDITORÍA =====================
+   Roles:
+     - admin     : todo (dueño)
+     - encargado : POS + inventario + precios, sin estado contable ni configuración
+     - cajero    : solo punto de venta
+   El PIN no es seguridad fuerte (la app corre en el navegador), pero cumple lo que
+   hace falta en un local: que un cajero no pueda tocar precios ni ver márgenes,
+   y que cada acción quede con nombre y apellido.                               */
+const PERMISOS = {
+  admin:     ['pos','inventario','precios','facturacion','contable','config','clientes','proveedores','layout','listado'],
+  encargado: ['pos','inventario','precios','facturacion','clientes','proveedores','layout','listado'],
+  cajero:    ['pos'],
+};
+function usuarioActual(){ return state.usuarioActivo || null; }
+function puede(area){
+  const u = usuarioActual();
+  if(!u) return false;
+  return (PERMISOS[u.rol] || []).includes(area);
+}
+function requierePermiso(area, queHace){
+  if(puede(area)) return true;
+  toast('No tenés permiso para ' + (queHace||'hacer esto') + '. Pedíselo a un encargado.', 'err', 4000);
+  return false;
+}
+
+/* --- Auditoría: quién hizo qué y cuándo --- */
+function auditar(accion, detalle, importe){
+  const u = usuarioActual();
+  const reg = {
+    id: Date.now() + Math.random(),
+    fecha: new Date().toISOString(),
+    usuario: u ? u.nombre : 'sin identificar',
+    rol: u ? u.rol : '—',
+    caja: (state.cajas.find(c=>c.id===state.config.sync.cajaId)||{}).nombre || '—',
+    accion, detalle: detalle||'', importe: importe==null ? null : Number(importe),
+  };
+  state.auditoria = state.auditoria || [];
+  state.auditoria.push(reg);
+  if(state.auditoria.length > 800) state.auditoria = state.auditoria.slice(-800);
+  save('ao_auditoria', state.auditoria);
+  // también a la nube, que es donde queda el histórico completo
+  if(liveSyncActivo && db){
+    try{ db.collection('auditoria').doc(String(reg.id)).set(reg); }catch(e){}
+  }
+}
+
+/* ============ LIBRO IVA VENTAS, BACKUP Y REGISTRO DE ACTIVIDAD ============ */
+
+// Libro IVA Ventas: una fila por comprobante fiscal, con neto, IVA y total.
+// Es el formato que pide el contador todos los meses y que hoy había que armar a mano.
+function exportarLibroIVA(){
+  if(!requierePermiso('contable','exportar el libro IVA')) return;
+  const desde = document.getElementById('iva-desde').value;
+  const hasta = document.getElementById('iva-hasta').value;
+  let ventas = state.ventas.filter(v=>v.arca && v.arca.cae);
+  if(desde) ventas = ventas.filter(v=>v.fecha.slice(0,10) >= desde);
+  if(hasta) ventas = ventas.filter(v=>v.fecha.slice(0,10) <= hasta);
+  if(!ventas.length){ toast('No hay comprobantes fiscales en ese período.', 'warn', 4000); return; }
+
+  ventas.sort((a,b)=> (a.arca.nro||0) - (b.arca.nro||0));
+  const emp = state.config.empresa;
+  const filas = [['Fecha','Tipo','Pto Vta','Número','CUIT emisor','Razón social','Doc receptor',
+                  'Neto gravado','IVA','No gravado','Exento','Total','CAE','Vto CAE']];
+  let tNeto=0, tIva=0, tTotal=0;
+  ventas.forEach(v=>{
+    const a = v.arca;
+    const neto = Number(a.impNeto||0), iva = Number(a.impIVA||0), total = Number(v.total||0);
+    tNeto+=neto; tIva+=iva; tTotal+=total;
+    filas.push([
+      v.fecha.slice(0,10),
+      a.cbteTipo==1?'Factura A':(a.cbteTipo==6?'Factura B':(a.cbteTipo==11?'Factura C':'Cbte '+a.cbteTipo)),
+      String(state.config.arca.puntoVenta||'').padStart(5,'0'),
+      String(a.nro||'').padStart(8,'0'),
+      emp.cuit||'', emp.razonSocial||'',
+      a.docNro || 'Consumidor final',
+      neto.toFixed(2), iva.toFixed(2), '0.00', '0.00', total.toFixed(2),
+      a.cae||'', a.caeVto||''
+    ]);
+  });
+  filas.push([]);
+  filas.push(['TOTALES','','','','','','', tNeto.toFixed(2), tIva.toFixed(2), '0.00','0.00', tTotal.toFixed(2),'','']);
+
+  const csv = filas.map(f=>f.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(';')).join('\n');
+  const periodo = (desde||'inicio')+'_a_'+(hasta||'hoy');
+  descargarArchivo('libro-iva-ventas_'+periodo+'.csv', '\uFEFF'+csv, 'text/csv;charset=utf-8;');
+  auditar('Export libro IVA', ventas.length+' comprobantes · '+periodo, tTotal);
+  toast(ventas.length+' comprobantes exportados.', 'ok', 4000);
+}
+
+// Backup completo: todo lo que la app tiene, en un archivo que se puede guardar aparte.
+function descargarBackup(){
+  if(!requierePermiso('contable','descargar el backup')) return;
+  const datos = {
+    generado: new Date().toISOString(),
+    version: 'almacen-os build 26',
+    empresa: state.config.empresa,
+    productos: state.productos,
+    ventas: state.ventas,
+    clientes: state.clientes,
+    proveedores: state.proveedores,
+    caja: state.caja,
+    sesiones: state.sesiones,
+    gondolas: state.gondolas,
+    local: state.local,
+    auditoria: state.auditoria,
+    config: state.config,
+  };
+  descargarArchivo('backup-almacen-os_'+hoyISO()+'.json', JSON.stringify(datos), 'application/json');
+  localStorage.setItem('ao_ultimo_backup', hoyISO());
+  mostrarEstadoBackup();
+  auditar('Backup descargado', state.productos.length+' productos · '+state.ventas.length+' ventas');
+  toast('Backup descargado. Guardalo fuera de esta computadora.', 'ok', 5000);
+}
+function mostrarEstadoBackup(){
+  const el = document.getElementById('backup-estado');
+  if(!el) return;
+  const ult = localStorage.getItem('ao_ultimo_backup');
+  if(!ult){ el.innerHTML = '⚠️ <b>Nunca hiciste un backup.</b> Conviene bajarlo hoy mismo.'; return; }
+  const dias = Math.floor((new Date(hoyISO()) - new Date(ult)) / 86400000);
+  el.innerHTML = dias===0 ? '✓ Backup al día (hoy).'
+    : (dias>7 ? `⚠️ <b>Último backup hace ${dias} días.</b> Conviene bajar uno nuevo.`
+              : `Último backup: hace ${dias} día(s).`);
+}
+function descargarArchivo(nombre, contenido, tipo){
+  const blob = new Blob([contenido], {type:tipo});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = nombre;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(a.href), 1500);
+}
+
+// Registro de actividad: quién hizo qué
+function verAuditoria(){
+  if(!requierePermiso('contable','ver el registro de actividad')) return;
+  const regs = (state.auditoria||[]).slice().reverse().slice(0,200);
+  const filas = regs.map(r=>`
+    <tr>
+      <td class="mono" style="white-space:nowrap;">${new Date(r.fecha).toLocaleString('es-AR')}</td>
+      <td>${r.usuario} <span class="subtitle" style="font-size:11px;">(${r.rol})</span></td>
+      <td>${r.caja}</td>
+      <td><b>${r.accion}</b></td>
+      <td>${r.detalle||''}</td>
+      <td class="num mono">${r.importe!=null ? fmt(r.importe) : ''}</td>
+    </tr>`).join('') || '<tr><td colspan="6" class="subtitle" style="padding:14px;">Sin movimientos registrados todavía.</td></tr>';
+  let ov = document.getElementById('auditoria-overlay');
+  if(!ov){
+    ov = document.createElement('div');
+    ov.id = 'auditoria-overlay'; ov.className = 'overlay';
+    document.body.appendChild(ov);
+  }
+  ov.innerHTML = `<div class="modal modal-lg">
+      <h3 style="margin-top:0;">Registro de actividad</h3>
+      <div class="subtitle">Últimos 200 movimientos. El histórico completo queda en la nube.</div>
+      <div style="overflow:auto;max-height:60vh;margin-top:12px;">
+        <table><thead><tr><th>Fecha</th><th>Usuario</th><th>Caja</th><th>Acción</th><th>Detalle</th><th style="text-align:right">Importe</th></tr></thead>
+        <tbody>${filas}</tbody></table>
+      </div>
+      <div class="row" style="justify-content:flex-end;margin-top:14px;">
+        <button class="btn ghost" onclick="document.getElementById('auditoria-overlay').classList.remove('open')">Cerrar</button>
+      </div>
+    </div>`;
+  ov.classList.add('open');
+}
+
 function hoyISO(){
   const d = new Date();
   return new Date(d.getTime() - d.getTimezoneOffset()*60000).toISOString().slice(0,10);
@@ -2831,6 +3023,7 @@ function saveProduct(){
 
 function deleteProduct(id){
   if(!confirm('¿Borrar este producto del inventario?')) return;
+  auditar('Baja de producto', (state.productos.find(p=>p.id===id)||{}).nombre || ('#'+id));
   state.productos = state.productos.filter(p=>p.id!==id);
   marcarCatalogoSucio();
   persist();
@@ -3664,6 +3857,7 @@ function confirmarCierreCaja(){
   ses.cerradaPor = operadorActivo ? operadorActivo.nombre : '—';
   ses.numeroZ = state.nextCierreZ++;
   ses.cierreZ = calcularCierreZ(ses);
+  auditar('Cierre Z', 'Z Nº '+(ses.numeroZ||'—'), ses.cierreZ ? ses.cierreZ.totalGeneral : null);
   const sesionCerradaId = ses.id;
   sesionActivaId = null;
   operadorActivo = null;
@@ -3863,6 +4057,7 @@ async function confirmarVenta(){
   });
   marcarCatalogoSucio();
   state.ventas.unshift(venta);
+  auditar('Venta', 'Ticket '+venta.ticket+' · '+venta.pago+' · '+venta.comprobante, venta.total);
   if(esCtaCte){
     state.ctacte.unshift({id: state.nextCtaCteId++, clienteId: clienteActualId, fecha: venta.fecha, tipo:'Venta fiado', ref:`Ticket #${venta.ticket}`, importe: total});
   } else {
@@ -5994,6 +6189,7 @@ function aplicarActualizacionMasiva(){
     if(op==='stock_sumar') p.stock = Math.max(0, p.stock + stockDelta);
     afectados++;
   });
+  auditar('Actualización masiva', op+' '+(pct||'')+(pct?'%':'')+' · '+afectados+' producto(s)');
   marcarCatalogoSucio();
   persist();
   document.getElementById('bulk-update-overlay').classList.remove('open');
@@ -6651,6 +6847,21 @@ async function liveSyncInit(){
   if(typeof firebase === 'undefined'){ toast('No se pudo cargar la librería de Firebase (revisá la conexión).', 'err', 5000); return; }
   try{
     const app = (firebase.apps && firebase.apps.length) ? firebase.app() : firebase.initializeApp(cfg.firebaseConfig);
+    // Sesión anónima: no pide usuario ni clave, pero le da identidad a la app frente a
+    // Firestore. Es lo que permite cerrar las reglas (antes estaban abiertas a cualquiera
+    // que conociera la URL del proyecto, que está en el código público).
+    try{
+      if(firebase.auth && !firebase.auth().currentUser){
+        await Promise.race([
+          firebase.auth().signInAnonymously(),
+          new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout auth')),8000))
+        ]);
+      }
+    }catch(e){
+      toast('No se pudo autenticar con la nube: '+(e.message||e)+'. Revisá que el acceso anónimo esté habilitado en Firebase.', 'err', 9000);
+      console.error('auth anónima falló:', e);
+      return;
+    }
     db = firebase.firestore(app);
     // El modo offline puede tardar o colgarse (p.ej. con varias pestañas abiertas) y frenaría
     // todo lo que sigue, incluido bajar el catálogo. Se le da 3 segundos y se sigue igual.
@@ -6956,7 +7167,59 @@ persist();
 renderInventario();
 renderCajasGrid();
 intentarReconectarImpresora();
+/* ---- Identificación con PIN al abrir la app ---- */
+function pedirPin(){
+  document.getElementById('pin-overlay').classList.add('open');
+  document.getElementById('pin-input').value = '';
+  document.getElementById('pin-error').textContent = '';
+  setTimeout(()=>document.getElementById('pin-input').focus(), 120);
+}
+function validarPin(){
+  const pin = document.getElementById('pin-input').value.trim();
+  const u = (state.config.usuarios||[]).find(x=>String(x.pin)===pin);
+  if(!u){
+    document.getElementById('pin-error').textContent = 'PIN incorrecto';
+    document.getElementById('pin-input').value = '';
+    return;
+  }
+  state.usuarioActivo = u;
+  document.getElementById('pin-overlay').classList.remove('open');
+  auditar('Inicio de sesión', u.nombre + ' (' + u.rol + ')');
+  aplicarPermisosUI();
+  toast('Hola ' + u.nombre, 'ok', 2500);
+}
+function cerrarSesionUsuario(){
+  auditar('Cierre de sesión', (usuarioActual()||{}).nombre || '');
+  state.usuarioActivo = null;
+  pedirPin();
+}
+// Oculta del menú lo que el rol no puede ver
+function aplicarPermisosUI(){
+  const mapa = {inventario:'inventario', pos:'pos', facturacion:'facturacion', listado:'listado',
+                layout:'layout', clientes:'clientes', proveedores:'proveedores',
+                contable:'contable', config:'config'};
+  document.querySelectorAll('#app-sidebar nav button').forEach(b=>{
+    const area = mapa[b.dataset.view] || b.dataset.view;
+    b.style.display = puede(area) ? '' : 'none';
+  });
+  // si la vista actual quedó prohibida, llevar al punto de venta
+  const activa = document.querySelector('.view.active');
+  if(activa){
+    const id = activa.id.replace('view-','');
+    if(!puede(mapa[id]||id)){
+      const btnPos = document.querySelector('#app-sidebar nav button[data-view="pos"]');
+      if(btnPos) btnPos.click();
+    }
+  }
+  // mostrar quién está operando
+  const meta = document.getElementById('clock');
+  if(meta && usuarioActual()){
+    meta.dataset.usuario = usuarioActual().nombre;
+  }
+}
+
 if(state.config.sync.liveEnabled) liveSyncInit();
+pedirPin();
 
 // Red de seguridad: al cerrar o recargar, guardar el catálogo sí o sí, por si algún
 // cambio no marcó el catálogo como sucio y quedó sin persistir.
@@ -6964,5 +7227,18 @@ window.addEventListener('beforeunload', ()=>{
   if(!state.config.sync.liveEnabled) save('ao_productos', state.productos);
 });
 </script>
+
+<!-- Identificación con PIN: define quién está operando y qué puede tocar -->
+<div class="overlay" id="pin-overlay" style="z-index:9000;">
+  <div class="modal" style="width:360px;text-align:center;">
+    <h3 style="margin:0 0 4px;">¿Quién está operando?</h3>
+    <div class="subtitle" style="margin-bottom:14px;">Ingresá tu PIN para continuar</div>
+    <input type="password" id="pin-input" inputmode="numeric" maxlength="8"
+           style="width:100%;text-align:center;font-size:30px;letter-spacing:10px;font-family:'IBM Plex Mono',monospace;padding:12px;"
+           onkeydown="if(event.key==='Enter') validarPin()">
+    <div id="pin-error" style="color:var(--az-danger);font-size:13px;height:18px;margin-top:6px;"></div>
+    <button class="btn primary" style="width:100%;margin-top:8px;" onclick="validarPin()">Entrar</button>
+  </div>
+</div>
 </body>
 </html>
